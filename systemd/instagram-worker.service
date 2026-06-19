@@ -1,0 +1,15 @@
+[Unit]
+Description=Instagram Downloader Worker
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/instagram-downloader-bot
+EnvironmentFile=/opt/instagram-downloader-bot/.env
+ExecStart=/opt/instagram-downloader-bot/instagram-worker
+Restart=always
+RestartSec=5
+User=instagrambot
+
+[Install]
+WantedBy=multi-user.target

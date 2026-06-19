@@ -1,0 +1,128 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/hibiken/asynq"
+
+	"instagram-downloader-bot/internal/config"
+	"instagram-downloader-bot/internal/db"
+	"instagram-downloader-bot/internal/downloader"
+	"instagram-downloader-bot/internal/instagram"
+	"instagram-downloader-bot/internal/logs"
+	"instagram-downloader-bot/internal/media"
+	"instagram-downloader-bot/internal/queue"
+	"instagram-downloader-bot/internal/settings"
+	"instagram-downloader-bot/internal/storage"
+	"instagram-downloader-bot/internal/telegram"
+	"instagram-downloader-bot/internal/users"
+	"instagram-downloader-bot/internal/workers"
+	"instagram-downloader-bot/pkg/logger"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+	logg := logger.New(cfg.Env)
+	if cfg.BotToken == "" {
+		log.Fatal("BOT_TOKEN is required")
+	}
+	if err := db.RunMigrations(cfg.DatabaseURL, "internal/db/migrations"); err != nil {
+		log.Fatal(err)
+	}
+	pool, err := db.NewPostgres(ctx, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close()
+	redisClient, err := db.NewRedis(ctx, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer redisClient.Close()
+
+	settingsService := settings.NewService(pool)
+	if err := settingsService.EnsureDefaults(ctx, cfg); err != nil {
+		log.Fatal(err)
+	}
+	adminService := users.NewAdminService(pool)
+	if err := adminService.EnsureSuperAdmin(ctx, cfg.SuperAdminTelegramID); err != nil {
+		log.Fatal(err)
+	}
+	userService := users.NewService(pool)
+	mediaService := media.NewService(pool)
+	errorLogs := logs.NewErrorLogService(pool)
+	queueClient, err := queue.NewClient(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer queueClient.Close()
+	locks := queue.NewLocks(redisClient, cfg.InFlightLockTTL)
+	storageService := storage.NewService(cfg.TempDownloadDir)
+	cleanup := storage.NewCleanupService(cfg.TempDownloadDir, cfg.TempFilesTTL, cfg.CleanupInterval, logg)
+	go cleanup.Start(ctx)
+
+	bot, err := telegram.New(cfg.BotToken, logg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	delivery := media.NewDeliveryService(bot.API)
+	downloadWorker := workers.NewDownloadWorker(workers.DownloadWorkerDeps{
+		Bot: bot.API, Logger: logg,
+		YTDLP: downloader.YTDLP{Bin: cfg.YTDLPBin},
+		FFProbe: downloader.FFProbe{Bin: cfg.FFprobeBin},
+		Formats: instagram.NewFormatBuilder(cfg.InstagramFormats),
+		Cookies: instagram.Cookies{Use: cfg.InstagramUseCookies, File: cfg.InstagramCookiesFile},
+		Storage: storageService, Media: mediaService, Settings: settingsService,
+		Users: userService, Logs: errorLogs, Queue: queueClient, Locks: locks,
+	})
+	audioWorker := workers.NewAudioWorker(bot.API, downloader.FFMpeg{Bin: cfg.FFmpegBin}, storageService, settingsService, mediaService, queueClient, locks)
+	sendWorker := workers.NewSendWorker(bot.API, delivery, mediaService, userService, queueClient, storageService, locks)
+	cleanupWorker := workers.NewCleanupWorker(cleanup)
+	notificationWorker := workers.NewNotificationWorker(bot.API, cfg)
+
+	redisOpt, err := queue.RedisOpt(cfg.RedisURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	server := asynq.NewServer(redisOpt, asynq.Config{
+		Concurrency: cfg.DownloadConcurrency + cfg.SendConcurrency + cfg.AudioConcurrency + 2,
+		Queues: map[string]int{
+			queue.QueueDownload:     cfg.DownloadConcurrency,
+			queue.QueueSend:         cfg.SendConcurrency,
+			queue.QueueAudioConvert: cfg.AudioConcurrency,
+			queue.QueueCleanup:      1,
+			queue.QueueNotification: 1,
+		},
+		RetryDelayFunc: func(n int, err error, task *asynq.Task) time.Duration {
+			return cfg.QueueBackoff * time.Duration(n)
+		},
+	})
+	mux := asynq.NewServeMux()
+	mux.Handle(queue.TypeDownload, downloadWorker)
+	mux.Handle(queue.TypeAudioConvert, audioWorker)
+	mux.Handle(queue.TypeSend, sendWorker)
+	mux.Handle(queue.TypeCleanup, cleanupWorker)
+	mux.Handle(queue.TypeNotification, notificationWorker)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(mux) }()
+	logg.Info("worker started")
+	select {
+	case <-ctx.Done():
+		server.Shutdown()
+	case err := <-errCh:
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
