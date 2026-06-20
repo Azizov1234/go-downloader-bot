@@ -15,10 +15,10 @@ type YTDLP struct {
 }
 
 type ProbeInfo struct {
-	Title          string `json:"title"`
-	Filesize      int64  `json:"filesize"`
-	FilesizeApprox int64 `json:"filesize_approx"`
-	Duration       int   `json:"duration"`
+	Title          string  `json:"title"`
+	Filesize       int64   `json:"filesize"`
+	FilesizeApprox int64   `json:"filesize_approx"`
+	Duration       float64 `json:"duration"`
 }
 
 func (y YTDLP) Probe(ctx context.Context, rawURL, format string, cookiesArgs []string) (ProbeInfo, error) {

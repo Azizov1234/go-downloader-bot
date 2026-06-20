@@ -133,15 +133,92 @@ Default tanlov: `VIDEO + AUTO`. User sifatni bosmasa ham `Yuklash` video Auto/As
 - online/offline
 - maintenance
 - max video/audio MB
+- Telegram API mode: cloud/local
+- cloud/local upload limit
+- Local Bot API health check
 - donat karta va matn
 - welcome/help text
 
-## systemd
+## 2GB gacha video yuborish
 
-`systemd/instagram-bot.service` va `systemd/instagram-worker.service` namunalarini server yo'llariga moslab o'zgartiring.
+Cloud Telegram Bot API odatda 50 MB atrofida upload limitga uriladi. 50 MB dan katta, masalan 148 MB, 500 MB, 1 GB yoki 2 GB gacha videolarni yuborish uchun Local Telegram Bot API Server kerak.
+
+Talablar:
+
+- my.telegram.org orqali `api_id` va `api_hash` oling.
+- `telegram-bot-api` serverga o'rnatilgan bo'lsin.
+- Bot va `telegram-bot-api` bir xil VPS/server ichida ishlasin.
+- `telegram-bot-api` `--local` rejimida ishlasin.
+- `uploads` papkasini local Bot API process o'qiy olsin.
+
+Local Bot API serverni ishga tushirish namunasi:
 
 ```bash
+telegram-bot-api \
+  --api-id=YOUR_API_ID \
+  --api-hash=YOUR_API_HASH \
+  --local \
+  --http-port=8081
+```
+
+Bot `.env` local rejim:
+
+```env
+TELEGRAM_API_MODE=local
+TELEGRAM_API_ID=YOUR_API_ID
+TELEGRAM_API_HASH=YOUR_API_HASH
+TELEGRAM_LOCAL_API_URL=http://127.0.0.1:8081
+TELEGRAM_LOCAL_MAX_UPLOAD_MB=2000
+TELEGRAM_USE_LOCAL_FILE_PATH=true
+REQUIRE_LOCAL_BOT_API_FOR_LARGE_FILES=true
+```
+
+Windowsda `.env`dagi `TELEGRAM_API_ID` va `TELEGRAM_API_HASH` to'ldirilgandan keyin local Bot API serverni script bilan start qilish mumkin:
+
+```powershell
+.\start-telegram-api.ps1
+```
+
+Cloud rejim:
+
+```env
+TELEGRAM_API_MODE=cloud
+TELEGRAM_CLOUD_API_URL=https://api.telegram.org
+TELEGRAM_CLOUD_MAX_UPLOAD_MB=50
+```
+
+Bot cache topilsa `telegram_file_id` orqali darhol yuboradi: download qilmaydi, local fayl qidirmaydi. Agar eski `file_id` ishlamasa, u tozalanadi va video qayta download qilinadi.
+
+Local rejimda video/audio serverdagi local file path orqali yuboriladi. Yuborish tugagandan keyin temp fayl o'chiriladi. Fayllar quyidagi ko'rinishda saqlanadi:
+
+```text
+uploads/temp/downloads/YYYY/MM/DD/user-{telegramId}/download-{downloadId}-{quality}.mp4
+```
+
+## systemd
+
+`systemd/telegram-bot-api.service`, `systemd/instagram-bot.service` va `systemd/instagram-worker.service` namunalarini server yo'llariga moslab o'zgartiring.
+
+```bash
+sudo cp systemd/telegram-bot-api.service /etc/systemd/system/
 sudo cp systemd/instagram-*.service /etc/systemd/system/
 sudo systemctl daemon-reload
+sudo systemctl enable --now telegram-bot-api
 sudo systemctl enable --now instagram-bot instagram-worker
+```
+
+`telegram-bot-api.service` namunasi:
+
+```ini
+[Unit]
+Description=Local Telegram Bot API Server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/telegram-bot-api --api-id=YOUR_API_ID --api-hash=YOUR_API_HASH --local --http-port=8081
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
 ```

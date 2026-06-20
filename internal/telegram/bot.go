@@ -16,8 +16,14 @@ type Bot struct {
 	Logger *slog.Logger
 }
 
-func New(token string, logger *slog.Logger) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(token)
+func New(token, apiEndpoint string, logger *slog.Logger) (*Bot, error) {
+	var api *tgbotapi.BotAPI
+	var err error
+	if apiEndpoint != "" {
+		api, err = tgbotapi.NewBotAPIWithAPIEndpoint(token, apiEndpoint)
+	} else {
+		api, err = tgbotapi.NewBotAPI(token)
+	}
 	if err != nil {
 		return nil, err
 	}

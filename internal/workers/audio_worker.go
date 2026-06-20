@@ -18,17 +18,18 @@ import (
 )
 
 type AudioWorker struct {
-	bot      *tgbotapi.BotAPI
-	ffmpeg   downloader.FFMpeg
-	storage  storage.Service
-	settings *settings.Service
-	media    *media.Service
-	queue    *queue.Client
-	locks    *queue.Locks
+	bot            *tgbotapi.BotAPI
+	ffmpeg         downloader.FFMpeg
+	storage        storage.Service
+	settings       *settings.Service
+	media          *media.Service
+	queue          *queue.Client
+	locks          *queue.Locks
+	allowOversized bool
 }
 
-func NewAudioWorker(bot *tgbotapi.BotAPI, ffmpeg downloader.FFMpeg, storageService storage.Service, settingsService *settings.Service, mediaService *media.Service, queueClient *queue.Client, locks *queue.Locks) *AudioWorker {
-	return &AudioWorker{bot: bot, ffmpeg: ffmpeg, storage: storageService, settings: settingsService, media: mediaService, queue: queueClient, locks: locks}
+func NewAudioWorker(bot *tgbotapi.BotAPI, ffmpeg downloader.FFMpeg, storageService storage.Service, settingsService *settings.Service, mediaService *media.Service, queueClient *queue.Client, locks *queue.Locks, allowOversized bool) *AudioWorker {
+	return &AudioWorker{bot: bot, ffmpeg: ffmpeg, storage: storageService, settings: settingsService, media: mediaService, queue: queueClient, locks: locks, allowOversized: allowOversized}
 }
 
 func (w *AudioWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
@@ -52,8 +53,8 @@ func (w *AudioWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if err != nil {
 		return err
 	}
-	audioLimit := minPositive(st.MaxAudioFileSizeMB, st.TelegramMaxUploadMB)
-	if size > 0 && bytesToMB(size) > audioLimit {
+	audioLimit := effectiveUploadLimit(st.MaxAudioFileSizeMB, telegramUploadLimit(st), w.allowOversized)
+	if audioLimit > 0 && size > 0 && bytesToMB(size) > audioLimit {
 		_ = w.storage.RemoveSafe(payload.OutputPath)
 		text := telegram.TooLargeAudio(audioLimit, bytesToMB(size))
 		waiters, _ := w.locks.PopWaiters(ctx, queue.WaitersKey(payload.NormalizedURL, payload.VariantType, payload.Quality))

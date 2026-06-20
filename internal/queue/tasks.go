@@ -29,14 +29,14 @@ type Recipient struct {
 }
 
 type DownloadTask struct {
-	Recipient          Recipient          `json:"recipient"`
-	DownloadID         int64              `json:"download_id"`
-	OriginalURL        string             `json:"original_url"`
-	NormalizedURL      string             `json:"normalized_url"`
-	InstagramShortcode string             `json:"instagram_shortcode"`
-	VariantType        media.VariantType  `json:"variant_type"`
-	Quality            media.Quality      `json:"quality"`
-	QueuedAt           time.Time          `json:"queued_at"`
+	Recipient          Recipient         `json:"recipient"`
+	DownloadID         int64             `json:"download_id"`
+	OriginalURL        string            `json:"original_url"`
+	NormalizedURL      string            `json:"normalized_url"`
+	InstagramShortcode string            `json:"instagram_shortcode"`
+	VariantType        media.VariantType `json:"variant_type"`
+	Quality            media.Quality     `json:"quality"`
+	QueuedAt           time.Time         `json:"queued_at"`
 }
 
 type AudioConvertTask struct {

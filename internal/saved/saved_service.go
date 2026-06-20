@@ -11,16 +11,16 @@ import (
 )
 
 type Item struct {
-	ID           int64
-	SaveNumber   int64
-	VariantID    int64
+	ID             int64
+	SaveNumber     int64
+	VariantID      int64
 	TelegramFileID string
-	Platform     string
-	Quality      media.Quality
-	VariantType  media.VariantType
-	OriginalURL  string
-	NormalizedURL string
-	CreatedAt    time.Time
+	Platform       string
+	Quality        media.Quality
+	VariantType    media.VariantType
+	OriginalURL    string
+	NormalizedURL  string
+	CreatedAt      time.Time
 }
 
 type Service struct {

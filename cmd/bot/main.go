@@ -74,11 +74,15 @@ func main() {
 	savedService := saved.NewService(pool)
 	donateService := donate.NewService(settingsService)
 
-	bot, err := telegram.New(cfg.BotToken, logg)
+	bot, err := telegram.New(cfg.BotToken, cfg.TelegramStartupEndpoint(), logg)
+	if err != nil && cfg.TelegramAPIMode == "local" {
+		logg.Warn("local telegram api unavailable at startup, falling back to cloud polling", "error", err)
+		bot, err = telegram.New(cfg.BotToken, cfg.TelegramEndpointForMode("cloud"), logg)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	delivery := media.NewDeliveryService(bot.API)
+	delivery := media.NewDeliveryService(bot.API, cfg, settingsService)
 	cleanup := storage.NewCleanupService(cfg.TempDownloadDir, cfg.TempFilesTTL, cfg.CleanupInterval, logg)
 	go cleanup.Start(ctx)
 

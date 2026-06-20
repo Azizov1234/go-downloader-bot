@@ -71,22 +71,27 @@ func main() {
 	cleanup := storage.NewCleanupService(cfg.TempDownloadDir, cfg.TempFilesTTL, cfg.CleanupInterval, logg)
 	go cleanup.Start(ctx)
 
-	bot, err := telegram.New(cfg.BotToken, logg)
+	bot, err := telegram.New(cfg.BotToken, cfg.TelegramStartupEndpoint(), logg)
+	if err != nil && cfg.TelegramAPIMode == "local" {
+		logg.Warn("local telegram api unavailable at startup, falling back to cloud polling", "error", err)
+		bot, err = telegram.New(cfg.BotToken, cfg.TelegramEndpointForMode("cloud"), logg)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	delivery := media.NewDeliveryService(bot.API)
+	delivery := media.NewDeliveryService(bot.API, cfg, settingsService)
 	downloadWorker := workers.NewDownloadWorker(workers.DownloadWorkerDeps{
 		Bot: bot.API, Logger: logg,
-		YTDLP: downloader.YTDLP{Bin: cfg.YTDLPBin},
+		YTDLP:   downloader.YTDLP{Bin: cfg.YTDLPBin},
 		FFProbe: downloader.FFProbe{Bin: cfg.FFprobeBin},
 		Formats: instagram.NewFormatBuilder(cfg.InstagramFormats),
 		Cookies: instagram.Cookies{Use: cfg.InstagramUseCookies, File: cfg.InstagramCookiesFile},
 		Storage: storageService, Media: mediaService, Settings: settingsService,
 		Users: userService, Logs: errorLogs, Queue: queueClient, Locks: locks,
+		AllowOversized: cfg.AllowOversizedDownloads,
 	})
-	audioWorker := workers.NewAudioWorker(bot.API, downloader.FFMpeg{Bin: cfg.FFmpegBin}, storageService, settingsService, mediaService, queueClient, locks)
-	sendWorker := workers.NewSendWorker(bot.API, delivery, mediaService, userService, queueClient, storageService, locks)
+	audioWorker := workers.NewAudioWorker(bot.API, downloader.FFMpeg{Bin: cfg.FFmpegBin}, storageService, settingsService, mediaService, queueClient, locks, cfg.AllowOversizedDownloads)
+	sendWorker := workers.NewSendWorker(bot.API, delivery, mediaService, userService, queueClient, storageService, locks, errorLogs)
 	cleanupWorker := workers.NewCleanupWorker(cleanup)
 	notificationWorker := workers.NewNotificationWorker(bot.API, cfg)
 

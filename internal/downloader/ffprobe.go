@@ -19,12 +19,12 @@ type FFProbe struct {
 
 type ffprobeOutput struct {
 	Streams []struct {
-		CodecType   string `json:"codec_type"`
-		CodecName   string `json:"codec_name"`
-		Width       int    `json:"width"`
-		Height      int    `json:"height"`
+		CodecType    string `json:"codec_type"`
+		CodecName    string `json:"codec_name"`
+		Width        int    `json:"width"`
+		Height       int    `json:"height"`
 		AvgFrameRate string `json:"avg_frame_rate"`
-		Duration    string `json:"duration"`
+		Duration     string `json:"duration"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`

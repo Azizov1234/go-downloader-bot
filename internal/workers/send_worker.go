@@ -3,11 +3,13 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/hibiken/asynq"
 
+	"instagram-downloader-bot/internal/logs"
 	"instagram-downloader-bot/internal/media"
 	"instagram-downloader-bot/internal/queue"
 	"instagram-downloader-bot/internal/storage"
@@ -23,10 +25,11 @@ type SendWorker struct {
 	queue    *queue.Client
 	storage  storage.Service
 	locks    *queue.Locks
+	logs     *logs.ErrorLogService
 }
 
-func NewSendWorker(bot *tgbotapi.BotAPI, delivery *media.DeliveryService, mediaService *media.Service, usersService *users.Service, queueClient *queue.Client, storageService storage.Service, locks *queue.Locks) *SendWorker {
-	return &SendWorker{bot: bot, delivery: delivery, media: mediaService, users: usersService, queue: queueClient, storage: storageService, locks: locks}
+func NewSendWorker(bot *tgbotapi.BotAPI, delivery *media.DeliveryService, mediaService *media.Service, usersService *users.Service, queueClient *queue.Client, storageService storage.Service, locks *queue.Locks, logsService *logs.ErrorLogService) *SendWorker {
+	return &SendWorker{bot: bot, delivery: delivery, media: mediaService, users: usersService, queue: queueClient, storage: storageService, locks: locks, logs: logsService}
 }
 
 func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
@@ -50,7 +53,7 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if payload.FileID != "" {
 		variant.TelegramFileID = payload.FileID
 		variant.TelegramFileUniqueID = payload.UniqueID
-		sent, err := w.delivery.SendByFileID(ctx, payload.Recipient.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID))
+		sent, err := w.delivery.SendByFileIDTimed(ctx, payload.Recipient.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt))
 		if err != nil {
 			_ = w.media.ClearFileID(ctx, variant.ID)
 			return w.queue.EnqueueDownload(ctx, payload.DownloadTask)
@@ -65,10 +68,12 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		waiters = []queue.Recipient{payload.Recipient}
 	}
 	first := waiters[0]
-	sent, err := w.delivery.SendLocal(ctx, first.ChatID, payload.LocalPath, variant, telegram.MediaActionsKeyboard(variant.ID))
+	sent, err := w.delivery.SendLocalTimed(ctx, first.ChatID, payload.LocalPath, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt))
 	if err != nil {
+		w.handleLocalSendFailure(ctx, payload, waiters, variant.ID, err)
 		w.locks.Release(ctx, queue.LockKey(payload.NormalizedURL, payload.VariantType, payload.Quality))
-		return err
+		_ = w.storage.RemoveSafe(payload.LocalPath)
+		return nil
 	}
 	variant, err = w.media.UpsertVariant(ctx, mediaFile, payload.VariantType, payload.Quality, sent.FileID, sent.FileUniqueID, payload.Metadata, "READY")
 	if err != nil {
@@ -77,7 +82,7 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	}
 	w.markSuccess(ctx, first, variant.ID, payload, sent.SendDuration)
 	for _, r := range waiters[1:] {
-		_, err := w.delivery.SendByFileID(ctx, r.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID))
+		_, err := w.delivery.SendByFileIDTimed(ctx, r.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt))
 		if err == nil {
 			w.markSuccess(ctx, r, variant.ID, payload, time.Since(start))
 		}
@@ -86,6 +91,44 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	_ = w.storage.RemoveSafe(payload.LocalPath)
 	w.locks.Release(ctx, queue.LockKey(payload.NormalizedURL, payload.VariantType, payload.Quality))
 	return nil
+}
+
+func (w *SendWorker) handleLocalSendFailure(ctx context.Context, payload queue.SendTask, waiters []queue.Recipient, variantID int64, sendErr error) {
+	text := telegram.UniversalErrorMessage
+	oversized := isRequestTooLarge(sendErr) || media.IsTelegramFileTooLarge(sendErr)
+	if limitMB, sizeMB, ok := media.TelegramLimit(sendErr); ok {
+		if limitMB <= 50 {
+			text = telegram.CloudVideoTooLarge(limitMB, sizeMB)
+		} else {
+			text = telegram.TooLargeVideo(limitMB, sizeMB)
+		}
+	} else if isRequestTooLarge(sendErr) {
+		text = telegram.TelegramUploadTooLarge(bytesToMB(payload.Metadata.FileSize))
+	}
+	if media.IsLocalBotAPIUnavailable(sendErr) {
+		text = telegram.LocalBotAPIUnavailable()
+		_ = w.queue.EnqueueNotification(ctx, queue.NotificationTask{Text: "Local Bot API server ishlamayapti: " + sendErr.Error()})
+	}
+	for _, r := range waiters {
+		msg := tgbotapi.NewMessage(r.ChatID, text)
+		_, _ = w.bot.Send(msg)
+		if r.DownloadID > 0 {
+			_ = w.media.UpdateDownloadMetrics(ctx, r.DownloadID, &variantID, "FAILED", time.Since(payload.QueuedAt), time.Duration(payload.DownloadMs)*time.Millisecond, time.Duration(payload.ConvertMs)*time.Millisecond, 0, time.Since(payload.QueuedAt), sendErr.Error())
+		}
+		if w.logs != nil {
+			userID := r.UserID
+			w.logs.Write(ctx, &userID, "instagram", "telegram_send", text, sendErr)
+		}
+	}
+	w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", oversized)
+}
+
+func isRequestTooLarge(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "request entity too large") || strings.Contains(msg, "too large")
 }
 
 func (w *SendWorker) markSuccess(ctx context.Context, r queue.Recipient, variantID int64, payload queue.SendTask, sendDuration time.Duration) {

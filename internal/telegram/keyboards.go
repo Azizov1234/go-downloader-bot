@@ -11,25 +11,25 @@ import (
 func UserMenu() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("🔗 Havola yuborish"),
-			tgbotapi.NewKeyboardButton("📁 Saqlanganlar"),
+			tgbotapi.NewKeyboardButton("Havola yuborish"),
+			tgbotapi.NewKeyboardButton("Saqlanganlar"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("👤 Profil"),
-			tgbotapi.NewKeyboardButton("💰 Donat"),
-			tgbotapi.NewKeyboardButton("ℹ️ Qo'llanma"),
+			tgbotapi.NewKeyboardButton("Profil"),
+			tgbotapi.NewKeyboardButton("Donat"),
+			tgbotapi.NewKeyboardButton("Qo'llanma"),
 		),
 	)
 }
 
 func SelectionKeyboard(token string, variantType media.VariantType, quality media.Quality) tgbotapi.InlineKeyboardMarkup {
-	video := "🎬 Video"
-	audio := "🎵 Audio MP3"
+	video := "Video"
+	audio := "Audio MP3"
 	if variantType == media.VariantVideo {
-		video += " ✅"
+		video += " OK"
 	}
 	if variantType == media.VariantAudio {
-		audio += " ✅"
+		audio += " OK"
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -37,20 +37,20 @@ func SelectionKeyboard(token string, variantType media.VariantType, quality medi
 			cb(audio, "sel:"+token+":type:audio"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb(mark("⚡ Auto", quality == media.QualityAuto), "sel:"+token+":q:AUTO"),
-			cb(mark("🎞 Original", quality == media.QualityOriginal), "sel:"+token+":q:ORIGINAL"),
+			cb(mark("Asl holati", quality == media.QualityAuto), "sel:"+token+":q:AUTO"),
+			cb(mark("Original", quality == media.QualityOriginal), "sel:"+token+":q:ORIGINAL"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb(mark("📺 1080p", quality == media.QualityP1080), "sel:"+token+":q:P1080"),
-			cb(mark("📱 720p", quality == media.QualityP720), "sel:"+token+":q:P720"),
+			cb(mark("1080p", quality == media.QualityP1080), "sel:"+token+":q:P1080"),
+			cb(mark("720p", quality == media.QualityP720), "sel:"+token+":q:P720"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb(mark("📉 480p", quality == media.QualityP480), "sel:"+token+":q:P480"),
-			cb(mark("📦 Kichik hajm", quality == media.QualitySmall), "sel:"+token+":q:SMALL"),
+			cb(mark("480p", quality == media.QualityP480), "sel:"+token+":q:P480"),
+			cb(mark("Kichik hajm", quality == media.QualitySmall), "sel:"+token+":q:SMALL"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb("✅ Yuklash", "sel:"+token+":download"),
-			cb("❌ Bekor qilish", "sel:"+token+":cancel"),
+			cb("Yuklash", "sel:"+token+":download"),
+			cb("Bekor qilish", "sel:"+token+":cancel"),
 		),
 	)
 }
@@ -58,14 +58,14 @@ func SelectionKeyboard(token string, variantType media.VariantType, quality medi
 func MediaActionsKeyboard(variantID int64) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			cb("🎵 MP3", fmt.Sprintf("media:%d:mp3", variantID)),
-			cb("📄 Ma'lumot", fmt.Sprintf("media:%d:info", variantID)),
-			cb("📁 Saqlash", fmt.Sprintf("media:%d:save", variantID)),
+			cb("MP3", fmt.Sprintf("media:%d:mp3", variantID)),
+			cb("Ma'lumot", fmt.Sprintf("media:%d:info", variantID)),
+			cb("Saqlash", fmt.Sprintf("media:%d:save", variantID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb("♻️ Boshqa sifat", fmt.Sprintf("media:%d:quality", variantID)),
-			cb("📤 Ulashish", fmt.Sprintf("media:%d:share", variantID)),
-			cb("🗑 O'chirish", fmt.Sprintf("media:%d:delete", variantID)),
+			cb("Boshqa sifat", fmt.Sprintf("media:%d:quality", variantID)),
+			cb("Ulashish", fmt.Sprintf("media:%d:share", variantID)),
+			cb("O'chirish", fmt.Sprintf("media:%d:delete", variantID)),
 		),
 	)
 }
@@ -74,10 +74,10 @@ func SavedPaginationKeyboard(page, total, perPage int) tgbotapi.InlineKeyboardMa
 	rows := [][]tgbotapi.InlineKeyboardButton{}
 	row := []tgbotapi.InlineKeyboardButton{}
 	if page > 1 {
-		row = append(row, cb("⬅️ Oldingi", fmt.Sprintf("saved:%d", page-1)))
+		row = append(row, cb("Oldingi", fmt.Sprintf("saved:%d", page-1)))
 	}
 	if page*perPage < total {
-		row = append(row, cb("Keyingi ➡️", fmt.Sprintf("saved:%d", page+1)))
+		row = append(row, cb("Keyingi", fmt.Sprintf("saved:%d", page+1)))
 	}
 	if len(row) > 0 {
 		rows = append(rows, row)
@@ -87,32 +87,43 @@ func SavedPaginationKeyboard(page, total, perPage int) tgbotapi.InlineKeyboardMa
 
 func AdminKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(cb("📊 Statistika", "admin:stats"), cb("👥 Userlar", "admin:users")),
-		tgbotapi.NewInlineKeyboardRow(cb("📥 Downloadlar", "admin:downloads"), cb("💰 Donatlar", "admin:donate")),
-		tgbotapi.NewInlineKeyboardRow(cb("👮 Adminlar", "admin:admins"), cb("⚙️ Bot sozlamalari", "admin:settings")),
-		tgbotapi.NewInlineKeyboardRow(cb("🧾 Loglar", "admin:logs")),
+		tgbotapi.NewInlineKeyboardRow(cb("Statistika", "admin:stats"), cb("Userlar", "admin:users")),
+		tgbotapi.NewInlineKeyboardRow(cb("Downloadlar", "admin:downloads"), cb("Donatlar", "admin:donate")),
+		tgbotapi.NewInlineKeyboardRow(cb("Adminlar", "admin:admins"), cb("Bot sozlamalari", "admin:settings")),
+		tgbotapi.NewInlineKeyboardRow(cb("Loglar", "admin:logs")),
 	)
 }
 
-func AdminSettingsKeyboard(online, maintenance bool) tgbotapi.InlineKeyboardMarkup {
-	onlineText := "🟢 Online"
+func AdminSettingsKeyboard(online, maintenance bool, apiMode string) tgbotapi.InlineKeyboardMarkup {
+	onlineText := "Online"
 	if online {
-		onlineText += " ✅"
+		onlineText += " OK"
 	}
-	offlineText := "🔴 Offline"
+	offlineText := "Offline"
 	if !online {
-		offlineText += " ✅"
+		offlineText += " OK"
 	}
-	maintenanceText := "🛠 Maintenance OFF"
+	maintenanceText := "Maintenance OFF"
 	if maintenance {
-		maintenanceText = "🛠 Maintenance ON ✅"
+		maintenanceText = "Maintenance ON OK"
+	}
+	cloudText := "Cloud mode"
+	localText := "Local mode"
+	if apiMode == "local" {
+		localText += " OK"
+	} else {
+		cloudText += " OK"
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(cb(onlineText, "admin:set:online"), cb(offlineText, "admin:set:offline")),
 		tgbotapi.NewInlineKeyboardRow(cb(maintenanceText, "admin:set:maintenance")),
-		tgbotapi.NewInlineKeyboardRow(cb("📦 Max video hajm", "admin:max:video"), cb("🎵 Max audio hajm", "admin:max:audio")),
-		tgbotapi.NewInlineKeyboardRow(cb("💳 Donat karta", "admin:edit:donate_card_number"), cb("📝 Welcome text", "admin:edit:welcome_text")),
-		tgbotapi.NewInlineKeyboardRow(cb("📝 Help text", "admin:edit:help_text"), cb("⬅️ Orqaga", "admin:home")),
+		tgbotapi.NewInlineKeyboardRow(cb("Telegram API mode", "admin:telegram:health")),
+		tgbotapi.NewInlineKeyboardRow(cb(cloudText, "admin:telegram:cloud"), cb(localText, "admin:telegram:local")),
+		tgbotapi.NewInlineKeyboardRow(cb("Cloud upload limit", "admin:max:cloud_upload"), cb("Local upload limit", "admin:max:local_upload")),
+		tgbotapi.NewInlineKeyboardRow(cb("Local Bot API health", "admin:telegram:health")),
+		tgbotapi.NewInlineKeyboardRow(cb("Max video hajm", "admin:max:video"), cb("Max audio hajm", "admin:max:audio")),
+		tgbotapi.NewInlineKeyboardRow(cb("Donat karta", "admin:edit:donate_card_number"), cb("Welcome text", "admin:edit:welcome_text")),
+		tgbotapi.NewInlineKeyboardRow(cb("Help text", "admin:edit:help_text"), cb("Orqaga", "admin:home")),
 	)
 }
 
@@ -125,8 +136,8 @@ func LimitPresetKeyboard(kind string, values []int64) tgbotapi.InlineKeyboardMar
 		}
 		rows = append(rows, row)
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(cb("✍️ Qo'lda kiritish", "admin:limit:"+kind+":manual")))
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(cb("⬅️ Orqaga", "admin:settings")))
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(cb("Qo'lda kiritish", "admin:limit:"+kind+":manual")))
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(cb("Orqaga", "admin:settings")))
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
@@ -136,7 +147,7 @@ func cb(text, data string) tgbotapi.InlineKeyboardButton {
 
 func mark(text string, selected bool) string {
 	if selected {
-		return text + " ✅"
+		return text + " OK"
 	}
 	return text
 }

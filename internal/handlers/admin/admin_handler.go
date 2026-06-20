@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"instagram-downloader-bot/internal/logs"
+	"instagram-downloader-bot/internal/media"
 	"instagram-downloader-bot/internal/settings"
 	"instagram-downloader-bot/internal/stats"
 	"instagram-downloader-bot/internal/telegram"
@@ -25,6 +26,7 @@ type Handler struct {
 	stats     *stats.Service
 	logs      *logs.ErrorLogService
 	adminLogs *logs.AdminActionLogService
+	delivery  *media.DeliveryService
 }
 
 type Dependencies struct {
@@ -35,10 +37,11 @@ type Dependencies struct {
 	Stats     *stats.Service
 	Logs      *logs.ErrorLogService
 	AdminLogs *logs.AdminActionLogService
+	Delivery  *media.DeliveryService
 }
 
 func NewHandler(dep Dependencies) *Handler {
-	return &Handler{bot: dep.Bot, redis: dep.Redis, settings: dep.Settings, admins: dep.Admins, stats: dep.Stats, logs: dep.Logs, adminLogs: dep.AdminLogs}
+	return &Handler{bot: dep.Bot, redis: dep.Redis, settings: dep.Settings, admins: dep.Admins, stats: dep.Stats, logs: dep.Logs, adminLogs: dep.AdminLogs, delivery: dep.Delivery}
 }
 
 func (h *Handler) Show(ctx context.Context, chatID, telegramID int64) {
@@ -103,10 +106,24 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		_ = h.settings.SetBool(ctx, "maintenance_mode", !st.MaintenanceMode)
 		h.adminLogs.Write(ctx, cb.From.ID, "settings.maintenance", fmt.Sprintf("maintenance=%v", !st.MaintenanceMode))
 		h.showSettings(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
+	case data == "admin:telegram:cloud":
+		_ = h.settings.SetText(ctx, "telegram_api_mode", "cloud")
+		h.adminLogs.Write(ctx, cb.From.ID, "settings.telegram_api_mode", "cloud")
+		h.showSettings(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
+	case data == "admin:telegram:local":
+		_ = h.settings.SetText(ctx, "telegram_api_mode", "local")
+		h.adminLogs.Write(ctx, cb.From.ID, "settings.telegram_api_mode", "local")
+		h.showSettings(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
+	case data == "admin:telegram:health":
+		h.showLocalBotAPIHealth(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
 	case data == "admin:max:video":
 		h.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Max video hajmni tanlang:", telegram.LimitPresetKeyboard("video", []int64{50, 100, 250, 500, 1024, 2048}))
 	case data == "admin:max:audio":
 		h.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Max audio hajmni tanlang:", telegram.LimitPresetKeyboard("audio", []int64{20, 50, 100, 200}))
+	case data == "admin:max:cloud_upload":
+		h.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Cloud upload limitni tanlang:", telegram.LimitPresetKeyboard("cloud_upload", []int64{20, 50}))
+	case data == "admin:max:local_upload":
+		h.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Local upload limitni tanlang:", telegram.LimitPresetKeyboard("local_upload", []int64{50, 100, 500, 1024, 2000}))
 	case strings.HasPrefix(data, "admin:limit:"):
 		h.handleLimit(ctx, cb, adminUser)
 	case strings.HasPrefix(data, "admin:edit:"):
@@ -131,15 +148,15 @@ func (h *Handler) TryHandleInput(ctx context.Context, msg *tgbotapi.Message) boo
 	}
 	defer h.redis.Del(ctx, key)
 	switch {
-	case mode == "limit:video" || mode == "limit:audio":
+	case strings.HasPrefix(mode, "limit:"):
 		v, err := strconv.ParseInt(strings.TrimSpace(msg.Text), 10, 64)
 		if err != nil || v <= 0 {
 			h.send(msg.Chat.ID, "To'g'ri MB sonini kiriting. Masalan: 300", nil)
 			return true
 		}
-		column := "max_video_file_size_mb"
-		if mode == "limit:audio" {
-			column = "max_audio_file_size_mb"
+		column, ok := limitColumn(strings.TrimPrefix(mode, "limit:"))
+		if !ok {
+			return false
 		}
 		_ = h.settings.SetInt64(ctx, column, v)
 		h.adminLogs.Write(ctx, msg.From.ID, "settings.limit", fmt.Sprintf("%s=%d", column, v))
@@ -198,13 +215,40 @@ func (h *Handler) handleLimit(ctx context.Context, cb *tgbotapi.CallbackQuery, a
 	if err != nil {
 		return
 	}
-	column := "max_video_file_size_mb"
-	if kind == "audio" {
-		column = "max_audio_file_size_mb"
+	column, ok := limitColumn(kind)
+	if !ok {
+		return
 	}
 	_ = h.settings.SetInt64(ctx, column, mb)
 	h.adminLogs.Write(ctx, adminUser.TelegramID, "settings.limit", fmt.Sprintf("%s=%d", column, mb))
 	h.showSettings(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
+}
+
+func (h *Handler) showLocalBotAPIHealth(ctx context.Context, chatID int64, messageID int) {
+	if h.delivery == nil {
+		h.edit(chatID, messageID, "Local Telegram Bot API health check mavjud emas.", telegram.AdminSettingsKeyboard(false, false, "cloud"))
+		return
+	}
+	if err := h.delivery.HealthCheck(ctx); err != nil {
+		h.edit(chatID, messageID, "Local Telegram Bot API server ishlamayapti.\n\n"+err.Error(), telegram.AdminKeyboard())
+		return
+	}
+	h.edit(chatID, messageID, "Local Telegram Bot API server ishlayapti.", telegram.AdminKeyboard())
+}
+
+func limitColumn(kind string) (string, bool) {
+	switch kind {
+	case "video":
+		return "max_video_file_size_mb", true
+	case "audio":
+		return "max_audio_file_size_mb", true
+	case "cloud_upload":
+		return "telegram_cloud_max_upload_mb", true
+	case "local_upload":
+		return "telegram_local_max_upload_mb", true
+	default:
+		return "", false
+	}
 }
 
 func (h *Handler) setPending(ctx context.Context, telegramID int64, mode string) {

@@ -113,7 +113,7 @@ func (r *Router) enqueueSelected(ctx context.Context, cb *tgbotapi.CallbackQuery
 		return
 	}
 	task := queue.DownloadTask{
-		Recipient: queue.Recipient{ChatID: st.ChatID, UserID: st.UserID, DownloadID: downloadID, Username: cb.From.UserName},
+		Recipient:  queue.Recipient{ChatID: st.ChatID, UserID: st.UserID, DownloadID: downloadID, Username: cb.From.UserName},
 		DownloadID: downloadID, OriginalURL: st.OriginalURL, NormalizedURL: st.NormalizedURL,
 		InstagramShortcode: st.InstagramShortcode, VariantType: st.VariantType, Quality: st.Quality, QueuedAt: time.Now(),
 	}
@@ -186,7 +186,7 @@ func (r *Router) enqueueMP3(ctx context.Context, cb *tgbotapi.CallbackQuery, use
 		return
 	}
 	task := queue.DownloadTask{
-		Recipient: queue.Recipient{ChatID: cb.Message.Chat.ID, UserID: userID, DownloadID: downloadID, Username: cb.From.UserName},
+		Recipient:  queue.Recipient{ChatID: cb.Message.Chat.ID, UserID: userID, DownloadID: downloadID, Username: cb.From.UserName},
 		DownloadID: downloadID, OriginalURL: variant.OriginalURL, NormalizedURL: variant.NormalizedURL,
 		InstagramShortcode: variant.InstagramShortcode, VariantType: media.VariantAudio, Quality: media.QualityMP3, QueuedAt: time.Now(),
 	}

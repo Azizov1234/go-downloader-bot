@@ -13,7 +13,8 @@ func (h *Handler) showSettings(ctx context.Context, chatID int64, messageID int)
 		h.edit(chatID, messageID, "Sozlamalarni o'qib bo'lmadi.", telegram.AdminKeyboard())
 		return
 	}
-	text := fmt.Sprintf("⚙️ Bot sozlamalari\n\nOnline: %v\nMaintenance: %v\nMax video: %d MB\nMax audio: %d MB\nTelegram upload: %d MB",
-		st.BotOnline, st.MaintenanceMode, st.MaxVideoFileSizeMB, st.MaxAudioFileSizeMB, st.TelegramMaxUploadMB)
-	h.edit(chatID, messageID, text, telegram.AdminSettingsKeyboard(st.BotOnline, st.MaintenanceMode))
+	text := fmt.Sprintf("Bot sozlamalari\n\nOnline: %v\nMaintenance: %v\nMax video: %d MB\nMax audio: %d MB\nTelegram API mode: %s\nCloud upload limit: %d MB\nLocal upload limit: %d MB\nLocal path: %v",
+		st.BotOnline, st.MaintenanceMode, st.MaxVideoFileSizeMB, st.MaxAudioFileSizeMB,
+		st.TelegramAPIMode, st.TelegramCloudMaxUploadMB, st.TelegramLocalMaxUploadMB, st.TelegramUseLocalFilePath)
+	h.edit(chatID, messageID, text, telegram.AdminSettingsKeyboard(st.BotOnline, st.MaintenanceMode, st.TelegramAPIMode))
 }

@@ -1,5 +1,4 @@
 .env
-storage/cookies/*.txt
 uploads/
 storage/temp/
 *.log

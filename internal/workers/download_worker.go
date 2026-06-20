@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -23,35 +24,37 @@ import (
 )
 
 type DownloadWorker struct {
-	bot       *tgbotapi.BotAPI
-	logger    *slog.Logger
-	ytdlp     downloader.YTDLP
-	ffprobe   downloader.FFProbe
-	formats   instagram.FormatBuilder
-	cookies   instagram.Cookies
-	storage   storage.Service
-	media     *media.Service
-	settings  *settings.Service
-	users     *users.Service
-	logs      *logs.ErrorLogService
-	queue     *queue.Client
-	locks     *queue.Locks
+	bot            *tgbotapi.BotAPI
+	logger         *slog.Logger
+	ytdlp          downloader.YTDLP
+	ffprobe        downloader.FFProbe
+	formats        instagram.FormatBuilder
+	cookies        instagram.Cookies
+	storage        storage.Service
+	media          *media.Service
+	settings       *settings.Service
+	users          *users.Service
+	logs           *logs.ErrorLogService
+	queue          *queue.Client
+	locks          *queue.Locks
+	allowOversized bool
 }
 
 type DownloadWorkerDeps struct {
-	Bot      *tgbotapi.BotAPI
-	Logger   *slog.Logger
-	YTDLP    downloader.YTDLP
-	FFProbe  downloader.FFProbe
-	Formats  instagram.FormatBuilder
-	Cookies  instagram.Cookies
-	Storage  storage.Service
-	Media    *media.Service
-	Settings *settings.Service
-	Users    *users.Service
-	Logs     *logs.ErrorLogService
-	Queue    *queue.Client
-	Locks    *queue.Locks
+	Bot            *tgbotapi.BotAPI
+	Logger         *slog.Logger
+	YTDLP          downloader.YTDLP
+	FFProbe        downloader.FFProbe
+	Formats        instagram.FormatBuilder
+	Cookies        instagram.Cookies
+	Storage        storage.Service
+	Media          *media.Service
+	Settings       *settings.Service
+	Users          *users.Service
+	Logs           *logs.ErrorLogService
+	Queue          *queue.Client
+	Locks          *queue.Locks
+	AllowOversized bool
 }
 
 func NewDownloadWorker(dep DownloadWorkerDeps) *DownloadWorker {
@@ -59,6 +62,7 @@ func NewDownloadWorker(dep DownloadWorkerDeps) *DownloadWorker {
 		bot: dep.Bot, logger: dep.Logger, ytdlp: dep.YTDLP, ffprobe: dep.FFProbe, formats: dep.Formats,
 		cookies: dep.Cookies, storage: dep.Storage, media: dep.Media, settings: dep.Settings,
 		users: dep.Users, logs: dep.Logs, queue: dep.Queue, locks: dep.Locks,
+		allowOversized: dep.AllowOversized,
 	}
 }
 
@@ -94,12 +98,16 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		return err
 	}
 	format := w.formats.For(payload.VariantType, payload.Quality)
-	info, probeErr := w.ytdlp.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
-	videoLimit := minPositive(st.MaxVideoFileSizeMB, st.TelegramMaxUploadMB)
-	if probeErr == nil && payload.VariantType == media.VariantVideo {
+	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
+	if payload.VariantType == media.VariantVideo && videoLimit > 0 {
+		info, probeErr := w.ytdlp.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
+		if probeErr != nil {
+			w.logger.Warn("yt-dlp probe skipped after error", "error", probeErr)
+		}
 		size := knownSize(info)
 		if size > 0 && bytesToMB(size) > videoLimit {
-			w.failWaiters(ctx, payload, telegram.TooLargeVideo(videoLimit, bytesToMB(size)), nil)
+			sizeMB := bytesToMB(size)
+			w.failWaiters(ctx, payload, tooLargeVideoText(st, videoLimit, sizeMB), nil)
 			_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), 0, 0, 0, time.Since(start), "oversized")
 			w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", true)
 			w.locks.Release(ctx, lockKey)
@@ -140,9 +148,10 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 			md.FileSize = stat.Size()
 		}
 	}
-	if md.FileSize > 0 && bytesToMB(md.FileSize) > videoLimit {
+	if videoLimit > 0 && md.FileSize > 0 && bytesToMB(md.FileSize) > videoLimit {
 		_ = w.storage.RemoveSafe(localPath)
-		w.failWaiters(ctx, payload, telegram.TooLargeVideo(videoLimit, bytesToMB(md.FileSize)), nil)
+		sizeMB := bytesToMB(md.FileSize)
+		w.failWaiters(ctx, payload, tooLargeVideoText(st, videoLimit, sizeMB), nil)
 		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), time.Since(start), 0, 0, time.Since(start), "oversized")
 		w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", true)
 		w.locks.Release(ctx, lockKey)
@@ -197,4 +206,39 @@ func minPositive(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func effectiveUploadLimit(appLimit, telegramLimit int64, allowOversized bool) int64 {
+	if allowOversized {
+		return telegramLimit
+	}
+	return minPositive(appLimit, telegramLimit)
+}
+
+func telegramUploadLimit(st settings.Settings) int64 {
+	if telegramMode(st.TelegramAPIMode) == "local" {
+		if st.TelegramLocalMaxUploadMB > 0 {
+			return st.TelegramLocalMaxUploadMB
+		}
+		return 2000
+	}
+	if st.TelegramCloudMaxUploadMB > 0 {
+		return st.TelegramCloudMaxUploadMB
+	}
+	return 50
+}
+
+func telegramMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "local" {
+		return "local"
+	}
+	return "cloud"
+}
+
+func tooLargeVideoText(st settings.Settings, limitMB, sizeMB int64) string {
+	if telegramMode(st.TelegramAPIMode) == "cloud" {
+		return telegram.CloudVideoTooLarge(limitMB, sizeMB)
+	}
+	return telegram.TooLargeVideo(limitMB, sizeMB)
 }

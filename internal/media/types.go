@@ -63,7 +63,7 @@ func CacheKey(normalizedURL string, variantType VariantType, quality Quality) st
 func DisplayQuality(q Quality) string {
 	switch q {
 	case QualityAuto:
-		return "Auto / Asl holati"
+		return "Asl holati"
 	case QualityOriginal:
 		return "Original"
 	case QualityP1080:

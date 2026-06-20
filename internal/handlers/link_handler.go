@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -48,19 +49,19 @@ func (r *Router) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	text := strings.TrimSpace(msg.Text)
 	switch text {
-	case "🔗 Havola yuborish":
+	case "Havola yuborish":
 		r.send(msg.Chat.ID, "Instagram link yuboring.", telegram.UserMenu())
 		return
-	case "📁 Saqlanganlar":
+	case "Saqlanganlar":
 		r.handleSaved(ctx, msg.Chat.ID, msg.From.ID, 1, 0)
 		return
-	case "👤 Profil":
+	case "Profil":
 		r.handleProfile(ctx, msg)
 		return
-	case "💰 Donat":
+	case "Donat":
 		r.handleDonate(ctx, msg)
 		return
-	case "ℹ️ Qo'llanma":
+	case "Qo'llanma":
 		st, _ := r.settings.Get(ctx)
 		r.send(msg.Chat.ID, st.HelpText, telegram.UserMenu())
 		return
@@ -92,6 +93,7 @@ func extractInstagramURL(text string) string {
 }
 
 func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message, user users.User, raw string) {
+	requestStarted := time.Now()
 	parsed, err := r.provider.Parse(raw)
 	if err != nil {
 		if err == apperrors.ErrUnsupportedPlatform {
@@ -101,12 +103,16 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		r.send(msg.Chat.ID, telegram.UnsupportedPlatformMessage, nil)
 		return
 	}
+
+	// Link darhol saqlanadi. Media file_id esa birinchi muvaffaqiyatli uploaddan keyin cache bo'ladi.
+	_, _ = r.media.GetOrCreateMediaFile(ctx, parsed.OriginalURL, parsed.NormalizedURL, parsed.Shortcode)
+
 	cacheResult := r.cache.Lookup(ctx, parsed.NormalizedURL, media.VariantVideo, media.QualityAuto)
 	if cacheResult.Hit {
 		variantID := cacheResult.Variant.ID
 		downloadID, _ := r.media.CreateDownload(ctx, user.ID, &variantID, "SUCCESS", true, cacheResult.Took)
 		_ = downloadID
-		_, sendErr := r.delivery.SendByFileID(ctx, msg.Chat.ID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID))
+		_, sendErr := r.delivery.SendByFileIDTimed(ctx, msg.Chat.ID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID), time.Since(requestStarted))
 		if sendErr == nil {
 			r.media.MarkDaily(ctx, media.VariantVideo, true, "SUCCESS", false)
 			_ = r.users.IncrementDownloads(ctx, user.ID)

@@ -28,22 +28,22 @@ import (
 )
 
 type Router struct {
-	bot       *tgbotapi.BotAPI
-	cfg       config.Config
-	logger    *slog.Logger
-	redis     *redis.Client
-	provider  instagram.Provider
-	cache     *cache.FileIDCache
-	media     *media.Service
-	users     *users.Service
-	admins    *users.AdminService
-	settings  *settings.Service
-	queue     *queue.Client
-	delivery  *media.DeliveryService
-	saved     *saved.Service
-	donate    *donate.Service
-	logs      *logs.ErrorLogService
-	admin     *admin.Handler
+	bot      *tgbotapi.BotAPI
+	cfg      config.Config
+	logger   *slog.Logger
+	redis    *redis.Client
+	provider instagram.Provider
+	cache    *cache.FileIDCache
+	media    *media.Service
+	users    *users.Service
+	admins   *users.AdminService
+	settings *settings.Service
+	queue    *queue.Client
+	delivery *media.DeliveryService
+	saved    *saved.Service
+	donate   *donate.Service
+	logs     *logs.ErrorLogService
+	admin    *admin.Handler
 }
 
 type Dependencies struct {
@@ -79,7 +79,7 @@ type selectionState struct {
 func NewRouter(dep Dependencies) *Router {
 	adminHandler := admin.NewHandler(admin.Dependencies{
 		Bot: dep.Bot, Redis: dep.Redis, Settings: dep.Settings, Admins: dep.Admins,
-		Stats: dep.Stats, Logs: dep.Logs, AdminLogs: dep.AdminLogs,
+		Stats: dep.Stats, Logs: dep.Logs, AdminLogs: dep.AdminLogs, Delivery: dep.Delivery,
 	})
 	return &Router{
 		bot: dep.Bot, cfg: dep.Config, logger: dep.Logger, redis: dep.Redis,
