@@ -15,6 +15,7 @@ const (
 	InstagramAcceptedMessage   = "Instagram link qabul qilindi.\n\nNima qilib beray?"
 	InstagramErrorMessage      = "Instagram videosini olib bo'lmadi.\nPost private, o'chirilgan yoki Instagram vaqtincha cheklagan bo'lishi mumkin."
 	UniversalErrorMessage      = "Media yuklab bo'lmadi.\nLink private bo'lishi, platforma cheklovi yoki vaqtinchalik xatolik sabab bo'lishi mumkin."
+	SendFailedMessage          = "Media yuklandi, lekin Telegramga yuborishda xatolik bo'ldi."
 )
 
 func SelectionText(variantType media.VariantType, quality media.Quality) string {

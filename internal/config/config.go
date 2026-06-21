@@ -29,6 +29,7 @@ type Config struct {
 	MaxAudioFileSizeMB              int64
 	TelegramMaxUploadMB             int64
 	AllowOversizedDownloads         bool
+	KeepFailedDownloads             bool
 	UploadsDir                      string
 	TempDownloadDir                 string
 	CacheDir                        string
@@ -81,6 +82,7 @@ func Load() (Config, error) {
 		MaxAudioFileSizeMB:              utils.Int64Env("MAX_AUDIO_FILE_SIZE_MB", 100),
 		TelegramMaxUploadMB:             utils.Int64Env("TELEGRAM_MAX_UPLOAD_MB", 2000),
 		AllowOversizedDownloads:         utils.BoolEnv("ALLOW_OVERSIZED_DOWNLOADS", false),
+		KeepFailedDownloads:             utils.BoolEnv("KEEP_FAILED_DOWNLOADS", false),
 		UploadsDir:                      utils.StringEnv("UPLOADS_DIR", "uploads"),
 		TempDownloadDir:                 utils.StringEnv("TEMP_DOWNLOAD_DIR", "uploads/temp/downloads"),
 		CacheDir:                        utils.StringEnv("CACHE_DIR", "uploads/cache"),

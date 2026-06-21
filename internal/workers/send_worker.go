@@ -72,7 +72,9 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if err != nil {
 		w.handleLocalSendFailure(ctx, payload, waiters, variant.ID, err)
 		w.locks.Release(ctx, queue.LockKey(payload.NormalizedURL, payload.VariantType, payload.Quality))
-		_ = w.storage.RemoveSafe(payload.LocalPath)
+		if !w.delivery.Config().KeepFailedDownloads {
+			_ = w.storage.RemoveSafe(payload.LocalPath)
+		}
 		return nil
 	}
 	variant, err = w.media.UpsertVariant(ctx, mediaFile, payload.VariantType, payload.Quality, sent.FileID, sent.FileUniqueID, payload.Metadata, "READY")
@@ -94,7 +96,7 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 }
 
 func (w *SendWorker) handleLocalSendFailure(ctx context.Context, payload queue.SendTask, waiters []queue.Recipient, variantID int64, sendErr error) {
-	text := telegram.UniversalErrorMessage
+	text := telegram.SendFailedMessage
 	oversized := isRequestTooLarge(sendErr) || media.IsTelegramFileTooLarge(sendErr)
 
 	st, _ := w.delivery.CurrentSettings(ctx)

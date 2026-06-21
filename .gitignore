@@ -11,3 +11,13 @@ bin/
 storage/cookies/
 uploads/
 *.log
+
+.env
+*.env
+storage/cookies/
+*.cookies.txt
+www.instagram.com_cookies.txt
+bin/
+*.exe
+uploads/
+*.log

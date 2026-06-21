@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,11 +21,22 @@ func (m mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return m(req)
 }
 
+func createTempFile(t *testing.T, name string, size int64) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	err := os.WriteFile(path, make([]byte, size), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	return path
+}
+
 func TestSendLocalTimed_LocalMode_Allowed(t *testing.T) {
 	oldFunc := localFileSizeMBFunc
 	defer func() { localFileSizeMBFunc = oldFunc }()
 	localFileSizeMBFunc = func(path string) int64 {
-		return 148
+		return 120
 	}
 
 	cfg := config.Config{
@@ -34,6 +47,8 @@ func TestSendLocalTimed_LocalMode_Allowed(t *testing.T) {
 		RequireLocalBotAPIForLargeFiles: true,
 		TelegramLocalAPIURL:             "http://127.0.0.1:8081",
 	}
+
+	tempFilePath := createTempFile(t, "test_120mb.mp4", 100)
 
 	httpCallCount := 0
 	mockClient := &http.Client{
@@ -47,6 +62,12 @@ func TestSendLocalTimed_LocalMode_Allowed(t *testing.T) {
 				}, nil
 			}
 			if strings.Contains(req.URL.Path, "sendVideo") {
+				// Verify that it is indeed a multipart upload
+				contentType := req.Header.Get("Content-Type")
+				if !strings.HasPrefix(contentType, "multipart/form-data") {
+					t.Errorf("expected Content-Type to start with 'multipart/form-data', got '%s'", contentType)
+				}
+
 				respStr := `{"ok":true,"result":{"message_id":123,"video":{"file_id":"fake_file_id","file_unique_id":"fake_uniq_id"}}}`
 				return &http.Response{
 					StatusCode: 200,
@@ -66,7 +87,7 @@ func TestSendLocalTimed_LocalMode_Allowed(t *testing.T) {
 		Quality:     QualityAuto,
 	}
 
-	sent, err := delivery.SendLocalTimed(context.Background(), 12345, "test.mp4", variant, nil, 0)
+	sent, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -84,7 +105,7 @@ func TestSendLocalTimed_CloudMode_Rejected(t *testing.T) {
 	oldFunc := localFileSizeMBFunc
 	defer func() { localFileSizeMBFunc = oldFunc }()
 	localFileSizeMBFunc = func(path string) int64 {
-		return 148
+		return 120
 	}
 
 	cfg := config.Config{
@@ -95,6 +116,8 @@ func TestSendLocalTimed_CloudMode_Rejected(t *testing.T) {
 		RequireLocalBotAPIForLargeFiles: false,
 	}
 
+	tempFilePath := createTempFile(t, "test_120mb.mp4", 100)
+
 	delivery := NewDeliveryService(&tgbotapi.BotAPI{}, cfg, nil)
 
 	variant := MediaVariant{
@@ -102,7 +125,7 @@ func TestSendLocalTimed_CloudMode_Rejected(t *testing.T) {
 		Quality:     QualityAuto,
 	}
 
-	_, err := delivery.SendLocalTimed(context.Background(), 12345, "test.mp4", variant, nil, 0)
+	_, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -127,6 +150,8 @@ func TestSendLocalTimed_LocalMode_Oversized(t *testing.T) {
 		RequireLocalBotAPIForLargeFiles: true,
 	}
 
+	tempFilePath := createTempFile(t, "test_2100mb.mp4", 100)
+
 	delivery := NewDeliveryService(&tgbotapi.BotAPI{}, cfg, nil)
 
 	variant := MediaVariant{
@@ -134,7 +159,7 @@ func TestSendLocalTimed_LocalMode_Oversized(t *testing.T) {
 		Quality:     QualityAuto,
 	}
 
-	_, err := delivery.SendLocalTimed(context.Background(), 12345, "test.mp4", variant, nil, 0)
+	_, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}

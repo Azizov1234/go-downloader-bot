@@ -226,14 +226,15 @@ WantedBy=multi-user.target
 
 Telegram Local Bot API Server orqali 2GB gacha fayllarni yuklash logikasi, xatolik xabarlari, Downloader fallback tizimi va testlar quyidagi ko'rinishda to'g'rilandi:
 
-### 1. Telegram Local API orqali Yuklash va Limitlar
+### 1. Telegram Local API orqali Multipart Formatda Yuklash va Limitlar
 - **Tegilgan kod**: `internal/media/delivery_service.go`, `internal/settings/settings_service.go`, `cmd/bot/main.go`, `cmd/worker/main.go`.
 - **Amalga oshirildi**: 
   - Telegram local va cloud rejimlari uchun limit tekshiruvlari aniq va ishonchli qilindi (`TelegramLocalMaxUploadMB` / `TelegramCloudMaxUploadMB`).
+  - Local API server local file path stringlarni qabul qilmagani uchun, local yuklash rejimi **multipart upload** formatiga o'tkazildi (xuddi `curl -F video=@/path/file.mp4` kabi).
   - Local rejimda 50MB dan katta bo'lgan fayllarni yuborishdan oldin local API serverining holati (`getMe` orqali) tekshiriladi. Agar u o'chiq bo'lsa, xatolik darhol qaytariladi (cloud rejimiga noto'g'ri o'tib ketmaydi).
   - Kichik hajmdagi (50MB gacha) fayllarni local API orqali yuklash o'xshamasagina avtomatik ravishda cloud API orqali yuklashga fallback qilinadi.
-  - Startup-da faol Telegram API rejimi va limitlari loglarga chiqariladi.
   - Har safar bot start bo'lganida database `EnsureDefaults` orqali database limit sozlamalarini `.env` dagi qiymatlar bilan sinxronizatsiya qiladi.
+  - Yuklashdan oldin barcha ma'lumotlar (absolute path, exists status, file size, api mode, limit, url va method=sendMultipartLocalAPI) logga yoziladi. Telegram API xatolik bersa, HTTP status, response body, masked token, file path va size logda to'liq ko'rsatiladi.
 
 ### 2. Downloader Fallback (`gallery-dl`)
 - **Tegilgan kod**: `internal/downloader/` (yangi files: `downloader.go`, `gallerydl.go`, `fallback.go`), `internal/workers/download_worker.go`, `cmd/worker/main.go`, `internal/config/config.go`.
@@ -242,15 +243,19 @@ Telegram Local Bot API Server orqali 2GB gacha fayllarni yuklash logikasi, xatol
   - Agar `yt-dlp` orqali yuklash xatolik bilan tugasa, avtomatik ravishda `gallery-dl` orqali yuklashga urinadi. Bu Instagram reels yoki postlar yuklash ishonchliligini oshiradi.
   - `.env` fayliga `GALLERYDL_BIN` (default `gallery-dl`) o'zgaruvchisi qo'shildi.
 
-### 3. Xatolik Xabarlari va Matnlar
-- **Tegilgan kod**: `internal/telegram/messages.go`, `internal/workers/send_worker.go`.
+### 3. Xatolik Xabarlari, Faylni Saqlash va normalizer
+- **Tegilgan kod**: `internal/telegram/messages.go`, `internal/workers/send_worker.go`, `internal/instagram/normalizer.go`.
 - **Amalga oshirildi**:
   - `TelegramUploadTooLarge` funksiyasi mode-aware holatga keltirildi. Local rejimda 50MB error ko'rsatmaydi va o'rniga dynamic limit ko'rsatadi (`Local Bot API limiti: 2000 MB`).
   - Local API server ishlamay qolganda yoki ulanish uzilganda dinamik ravishda to'g'ri URL portini ko'rsatuvchi xabar chiqariladi: `Local Telegram Bot API ishlamayapti yoki 127.0.0.1:8081 ulanmayapti`.
+  - Download xatosi va Send xatosi xabarlari ajratildi. Yuklab olgandan keyin Telegramga jo'natib bo'lmaganida: `Media yuklandi, lekin Telegramga yuborishda xatolik bo'ldi.` xabari qaytariladi.
+  - `.env` faylida `KEEP_FAILED_DOWNLOADS=true` sozlangan bo'lsa, Telegramga yuborish o'xshamagan fayllar diskdan darhol o'chirilmaydi.
+  - Instagram `/reels/{shortcode}/` havolalari ham qabul qilinib, avtomatik ravishda `/reel/{shortcode}/` ko'rinishida normalize qilinadi.
 
 ### 4. Unit Testlar
 - **Yangi yozilgan testlar**: 
-  - `internal/media/delivery_service_test.go` (Local mode allowed, Cloud mode rejected, Local mode oversized check).
+  - `internal/media/delivery_service_test.go` (Local mode allowed with multipart verification, Cloud mode rejected, Local mode oversized check).
   - `internal/telegram/messages_test.go` (Local/Cloud error message va Local Bot API unavailable dynamic format testlari).
+  - `internal/instagram/normalizer_test.go` (Reels normalizer testi).
 - **Tekshirish**: `go test ./...` komandasi orqali barcha testlar muvaffaqiyatli o'tadi.
 ```

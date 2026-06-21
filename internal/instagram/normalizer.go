@@ -25,10 +25,14 @@ func Normalize(raw string) (ParsedURL, error) {
 
 	kind := strings.ToLower(parts[0])
 	switch kind {
-	case "p", "reel", "tv":
+	case "p", "reel", "reels", "tv":
+		kindVal := kind
+		if kindVal == "reels" {
+			kindVal = "reel"
+		}
 		shortcode := parts[1]
-		normalized := "https://www.instagram.com/" + kind + "/" + shortcode + "/"
-		return ParsedURL{OriginalURL: raw, NormalizedURL: normalized, Shortcode: shortcode, Kind: kind}, nil
+		normalized := "https://www.instagram.com/" + kindVal + "/" + shortcode + "/"
+		return ParsedURL{OriginalURL: raw, NormalizedURL: normalized, Shortcode: shortcode, Kind: kindVal}, nil
 	case "stories":
 		if len(parts) < 3 {
 			return ParsedURL{}, apperrors.ErrUnsupportedPlatform

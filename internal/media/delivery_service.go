@@ -1,11 +1,14 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -118,15 +121,23 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 		return SentFile{}, &TelegramLimitError{Mode: mode, LimitMB: limitMB, SizeMB: sizeMB}
 	}
 
+	absPath, absErr := filepath.Abs(localPath)
+	exists := false
+	if absErr == nil {
+		if _, statErr := os.Stat(absPath); statErr == nil {
+			exists = true
+		}
+	}
+
 	caption := CaptionWithElapsed(variant, elapsed)
 	var msg tgbotapi.Message
 	method := "sendCloudUpload"
 	if mode == "local" {
-		method = "sendLocalPath"
+		method = "sendMultipartLocalAPI"
 	}
 
-	log.Printf("send local media mode=%s size_mb=%d effective_limit_mb=%d local_api_url=%s method=%s",
-		mode, sizeMB, limitMB, s.cfg.TelegramLocalAPIURL, method)
+	log.Printf("send local media mode=%s size_mb=%d effective_limit_mb=%d local_api_url=%s method=%s file_path=%s exists=%t",
+		mode, sizeMB, limitMB, s.cfg.TelegramLocalAPIURL, method, absPath, exists)
 
 	if mode == "local" {
 		isOverCloudLimit := sizeMB > st.TelegramCloudMaxUploadMB
@@ -136,7 +147,7 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 			}
 		}
 
-		msg, err = s.sendLocalPath(ctx, chatID, localPath, variant, caption, replyMarkup)
+		msg, err = s.sendMultipartLocalAPI(ctx, chatID, localPath, variant, caption, replyMarkup)
 		if err != nil && !isOverCloudLimit {
 			// Fallback to cloud only for small files
 			msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup)
@@ -217,27 +228,127 @@ func (s *DeliveryService) sendFileIDViaCloud(ctx context.Context, chatID int64, 
 	return s.cloudRequest(ctx, method, values)
 }
 
-func (s *DeliveryService) sendLocalPath(ctx context.Context, chatID int64, localPath string, variant MediaVariant, caption string, replyMarkup any) (tgbotapi.Message, error) {
+func maskToken(urlStr, token string) string {
+	if token == "" {
+		return urlStr
+	}
+	return strings.Replace(urlStr, token, "BOT_TOKEN_MASKED", -1)
+}
+
+func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int64, localPath string, variant MediaVariant, caption string, replyMarkup any) (tgbotapi.Message, error) {
 	absPath, err := filepath.Abs(localPath)
 	if err != nil {
 		return tgbotapi.Message{}, err
 	}
-	values := url.Values{}
-	values.Set("chat_id", strconv.FormatInt(chatID, 10))
-	values.Set("caption", caption)
-	addReplyMarkup(values, replyMarkup)
-	method := "sendVideo"
-	if variant.VariantType == VariantAudio {
-		method = "sendAudio"
-		values.Set("audio", absPath)
-	} else {
-		values.Set("video", absPath)
-		values.Set("supports_streaming", "true")
-		if variant.Duration != nil {
-			values.Set("duration", strconv.Itoa(*variant.Duration))
+
+	file, err := os.Open(absPath)
+	if err != nil {
+		return tgbotapi.Message{}, err
+	}
+	defer file.Close()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	if err := writer.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+		return tgbotapi.Message{}, err
+	}
+	if err := writer.WriteField("caption", caption); err != nil {
+		return tgbotapi.Message{}, err
+	}
+
+	if replyMarkup != nil {
+		mBody, mErr := json.Marshal(replyMarkup)
+		if mErr == nil && len(mBody) > 0 && string(mBody) != "null" {
+			if err := writer.WriteField("reply_markup", string(mBody)); err != nil {
+				return tgbotapi.Message{}, err
+			}
 		}
 	}
-	return s.localRequest(ctx, method, values)
+
+	method := "sendVideo"
+	fieldName := "video"
+	if variant.VariantType == VariantAudio {
+		method = "sendAudio"
+		fieldName = "audio"
+	} else {
+		if err := writer.WriteField("supports_streaming", "true"); err != nil {
+			return tgbotapi.Message{}, err
+		}
+		if variant.Duration != nil {
+			if err := writer.WriteField("duration", strconv.Itoa(*variant.Duration)); err != nil {
+				return tgbotapi.Message{}, err
+			}
+		}
+	}
+
+	part, err := writer.CreateFormFile(fieldName, filepath.Base(absPath))
+	if err != nil {
+		return tgbotapi.Message{}, err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return tgbotapi.Message{}, err
+	}
+
+	if err := writer.Close(); err != nil {
+		return tgbotapi.Message{}, err
+	}
+
+	stat, _ := os.Stat(absPath)
+	var fileSize int64
+	if stat != nil {
+		fileSize = stat.Size()
+	}
+
+	endpoint := apiMethodURL(s.cfg.TelegramLocalAPIURL, s.cfg.BotToken, method)
+	return s.requestMultipart(ctx, endpoint, method, absPath, body, writer.FormDataContentType(), fileSize)
+}
+
+func (s *DeliveryService) requestMultipart(ctx context.Context, endpoint, method, absPath string, body *bytes.Buffer, contentType string, fileSize int64) (tgbotapi.Message, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	if err != nil {
+		return tgbotapi.Message{}, err
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := s.http.Do(req)
+	if err != nil {
+		log.Printf("Telegram API HTTP request failed: err=%v, endpoint=%s, file_path=%s, file_size=%d",
+			err, maskToken(endpoint, s.cfg.BotToken), absPath, fileSize)
+		return tgbotapi.Message{}, &LocalBotAPIError{URL: s.cfg.TelegramLocalAPIURL, Err: err}
+	}
+	defer resp.Body.Close()
+
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Telegram API read body failed: HTTP_status=%d, err=%v, endpoint=%s, file_path=%s, file_size=%d",
+			resp.StatusCode, err, maskToken(endpoint, s.cfg.BotToken), absPath, fileSize)
+		return tgbotapi.Message{}, &LocalBotAPIError{URL: s.cfg.TelegramLocalAPIURL, Err: err}
+	}
+
+	var apiResp tgbotapi.APIResponse
+	if err := json.Unmarshal(respBodyBytes, &apiResp); err != nil {
+		log.Printf("Telegram API JSON parse failed: HTTP_status=%d, body=%s, endpoint=%s, file_path=%s, file_size=%d, err=%v",
+			resp.StatusCode, string(respBodyBytes), maskToken(endpoint, s.cfg.BotToken), absPath, fileSize, err)
+		return tgbotapi.Message{}, &LocalBotAPIError{URL: s.cfg.TelegramLocalAPIURL, Err: err}
+	}
+
+	if !apiResp.Ok {
+		errVal := fmt.Errorf("telegram %s failed: %s", method, apiResp.Description)
+		log.Printf("Telegram API error response: HTTP_status=%d, body=%s, endpoint=%s, file_path=%s, file_size=%d, err=%v",
+			resp.StatusCode, string(respBodyBytes), maskToken(endpoint, s.cfg.BotToken), absPath, fileSize, errVal)
+		return tgbotapi.Message{}, &LocalBotAPIError{URL: s.cfg.TelegramLocalAPIURL, Err: errVal}
+	}
+
+	if len(apiResp.Result) == 0 {
+		return tgbotapi.Message{}, nil
+	}
+
+	var msg tgbotapi.Message
+	if err := json.Unmarshal(apiResp.Result, &msg); err != nil {
+		return tgbotapi.Message{}, err
+	}
+	return msg, nil
 }
 
 func (s *DeliveryService) cloudRequest(ctx context.Context, method string, values url.Values) (tgbotapi.Message, error) {
