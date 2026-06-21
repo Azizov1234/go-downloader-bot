@@ -3,3 +3,11 @@ uploads/
 storage/temp/
 *.log
 *.exe
+
+bin/
+*.exe
+.env
+*.cookies.txt
+storage/cookies/
+uploads/
+*.log
