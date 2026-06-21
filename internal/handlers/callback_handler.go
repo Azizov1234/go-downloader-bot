@@ -64,7 +64,7 @@ func (r *Router) handleSelectionCallback(ctx context.Context, cb *tgbotapi.Callb
 			}
 		}
 		_ = r.saveSelection(ctx, token, st)
-		r.edit(cb.Message.Chat.ID, cb.Message.MessageID, telegram.SelectionText(st.VariantType, st.Quality), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
+		r.edit(cb.Message.Chat.ID, cb.Message.MessageID, telegram.SelectionText(st.VariantType, st.Quality, st.CustomTitle), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
 	case "q":
 		if len(parts) < 4 {
 			return
@@ -72,10 +72,13 @@ func (r *Router) handleSelectionCallback(ctx context.Context, cb *tgbotapi.Callb
 		st.VariantType = media.VariantVideo
 		st.Quality = media.Quality(parts[3])
 		_ = r.saveSelection(ctx, token, st)
-		r.edit(cb.Message.Chat.ID, cb.Message.MessageID, telegram.SelectionText(st.VariantType, st.Quality), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
+		r.edit(cb.Message.Chat.ID, cb.Message.MessageID, telegram.SelectionText(st.VariantType, st.Quality, st.CustomTitle), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
 	case "cancel":
 		r.deleteSelection(ctx, token)
 		r.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Bekor qilindi.", nil)
+	case "rename":
+		r.setPendingRename(ctx, cb.From.ID, token)
+		r.send(cb.Message.Chat.ID, "✍️ Yangi sarlavha/nomni kiriting:", nil)
 	case "download":
 		r.enqueueSelected(ctx, cb, token, st)
 	}
@@ -86,7 +89,7 @@ func (r *Router) enqueueSelected(ctx context.Context, cb *tgbotapi.CallbackQuery
 	if cacheResult.Hit {
 		variantID := cacheResult.Variant.ID
 		_, _ = r.media.CreateDownload(ctx, st.UserID, &variantID, "SUCCESS", true, cacheResult.Took)
-		_, err := r.delivery.SendByFileID(ctx, st.ChatID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID))
+		_, err := r.delivery.SendByFileID(ctx, st.ChatID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID), st.CustomTitle)
 		if err == nil {
 			r.media.MarkDaily(ctx, st.VariantType, true, "SUCCESS", false)
 			_ = r.users.IncrementDownloads(ctx, st.UserID)
@@ -116,6 +119,7 @@ func (r *Router) enqueueSelected(ctx context.Context, cb *tgbotapi.CallbackQuery
 		Recipient:  queue.Recipient{ChatID: st.ChatID, UserID: st.UserID, DownloadID: downloadID, Username: cb.From.UserName},
 		DownloadID: downloadID, OriginalURL: st.OriginalURL, NormalizedURL: st.NormalizedURL,
 		InstagramShortcode: st.InstagramShortcode, VariantType: st.VariantType, Quality: st.Quality, QueuedAt: time.Now(),
+		CustomTitle:        st.CustomTitle,
 	}
 	if err := r.queue.EnqueueDownload(ctx, task); err != nil {
 		r.logs.Write(ctx, &st.UserID, "instagram", "enqueue", "queuega qo'shib bo'lmadi", err)
@@ -160,17 +164,6 @@ func (r *Router) handleMediaCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 		r.send(cb.Message.Chat.ID, text, nil)
 	case "mp3":
 		r.enqueueMP3(ctx, cb, user.ID, variant)
-	case "quality":
-		st := selectionState{
-			OriginalURL: variant.OriginalURL, NormalizedURL: variant.NormalizedURL, InstagramShortcode: variant.InstagramShortcode,
-			VariantType: media.VariantVideo, Quality: media.QualityAuto, UserID: user.ID, ChatID: cb.Message.Chat.ID,
-		}
-		token, err := r.setSelection(ctx, st)
-		if err != nil {
-			r.send(cb.Message.Chat.ID, telegram.UniversalErrorMessage, nil)
-			return
-		}
-		r.send(cb.Message.Chat.ID, telegram.SelectionText(st.VariantType, st.Quality), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
 	case "share":
 		r.send(cb.Message.Chat.ID, "Ulashish uchun link:\n"+variant.NormalizedURL, nil)
 	case "delete":

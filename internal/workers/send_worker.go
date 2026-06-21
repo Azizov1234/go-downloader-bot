@@ -3,6 +3,8 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,7 +55,7 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if payload.FileID != "" {
 		variant.TelegramFileID = payload.FileID
 		variant.TelegramFileUniqueID = payload.UniqueID
-		sent, err := w.delivery.SendByFileIDTimed(ctx, payload.Recipient.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt))
+		sent, err := w.delivery.SendByFileIDTimed(ctx, payload.Recipient.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt), payload.CustomTitle)
 		if err != nil {
 			_ = w.media.ClearFileID(ctx, variant.ID)
 			return w.queue.EnqueueDownload(ctx, payload.DownloadTask)
@@ -63,12 +65,24 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		return nil
 	}
 
+	// Rename local file if custom title is provided
+	if payload.CustomTitle != "" {
+		safeTitle := sanitizeFilename(payload.CustomTitle)
+		if safeTitle != "" {
+			ext := filepath.Ext(payload.LocalPath)
+			newPath := filepath.Join(filepath.Dir(payload.LocalPath), safeTitle+ext)
+			if err := os.Rename(payload.LocalPath, newPath); err == nil {
+				payload.LocalPath = newPath
+			}
+		}
+	}
+
 	waiters, _ := w.locks.PopWaiters(ctx, queue.WaitersKey(payload.NormalizedURL, payload.VariantType, payload.Quality))
 	if len(waiters) == 0 {
 		waiters = []queue.Recipient{payload.Recipient}
 	}
 	first := waiters[0]
-	sent, err := w.delivery.SendLocalTimed(ctx, first.ChatID, payload.LocalPath, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt))
+	sent, err := w.delivery.SendLocalTimed(ctx, first.ChatID, payload.LocalPath, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt), payload.CustomTitle)
 	if err != nil {
 		w.handleLocalSendFailure(ctx, payload, waiters, variant.ID, err)
 		w.locks.Release(ctx, queue.LockKey(payload.NormalizedURL, payload.VariantType, payload.Quality))
@@ -84,7 +98,7 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	}
 	w.markSuccess(ctx, first, variant.ID, payload, sent.SendDuration)
 	for _, r := range waiters[1:] {
-		_, err := w.delivery.SendByFileIDTimed(ctx, r.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt))
+		_, err := w.delivery.SendByFileIDTimed(ctx, r.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt), payload.CustomTitle)
 		if err == nil {
 			w.markSuccess(ctx, r, variant.ID, payload, time.Since(start))
 		}
@@ -160,4 +174,19 @@ func (w *SendWorker) markSuccess(ctx context.Context, r queue.Recipient, variant
 	}
 	w.media.MarkDaily(ctx, payload.VariantType, payload.FileID != "", "SUCCESS", false)
 	_ = w.users.IncrementDownloads(ctx, r.UserID)
+}
+
+func sanitizeFilename(s string) string {
+	r := strings.NewReplacer(
+		"/", "",
+		"\\", "",
+		":", "",
+		"*", "",
+		"?", "",
+		"\"", "",
+		"<", "",
+		">", "",
+		"|", "",
+	)
+	return strings.TrimSpace(r.Replace(s))
 }

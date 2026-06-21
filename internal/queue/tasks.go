@@ -37,6 +37,7 @@ type DownloadTask struct {
 	VariantType        media.VariantType `json:"variant_type"`
 	Quality            media.Quality     `json:"quality"`
 	QueuedAt           time.Time         `json:"queued_at"`
+	CustomTitle        string            `json:"custom_title,omitempty"`
 }
 
 type AudioConvertTask struct {

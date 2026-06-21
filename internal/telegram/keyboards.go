@@ -41,16 +41,7 @@ func SelectionKeyboard(token string, variantType media.VariantType, quality medi
 			cb(audio, "sel:"+token+":type:audio"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb(mark("💎 Asl holati", quality == media.QualityAuto), "sel:"+token+":q:AUTO"),
-			cb(mark("✨ Original", quality == media.QualityOriginal), "sel:"+token+":q:ORIGINAL"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			cb(mark("🔥 1080p", quality == media.QualityP1080), "sel:"+token+":q:P1080"),
-			cb(mark("⚡ 720p", quality == media.QualityP720), "sel:"+token+":q:P720"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			cb(mark("🎬 480p", quality == media.QualityP480), "sel:"+token+":q:P480"),
-			cb(mark("📦 Kichik hajm", quality == media.QualitySmall), "sel:"+token+":q:SMALL"),
+			cb("✍️ Nomni tahrirlash", "sel:"+token+":rename"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			cb("📥 Yuklash", "sel:"+token+":download"),
@@ -67,7 +58,6 @@ func MediaActionsKeyboard(variantID int64) tgbotapi.InlineKeyboardMarkup {
 			cb("💾 Saqlash", fmt.Sprintf("media:%d:save", variantID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			cb("🔄 Boshqa sifat", fmt.Sprintf("media:%d:quality", variantID)),
 			cb("📤 Ulashish", fmt.Sprintf("media:%d:share", variantID)),
 			cb("🗑️ O'chirish", fmt.Sprintf("media:%d:delete", variantID)),
 		),

@@ -90,25 +90,25 @@ func NewDeliveryService(bot *tgbotapi.BotAPI, cfg config.Config, settingsService
 	}
 }
 
-func (s *DeliveryService) SendByFileID(ctx context.Context, chatID int64, variant MediaVariant, replyMarkup any) (SentFile, error) {
-	return s.SendByFileIDTimed(ctx, chatID, variant, replyMarkup, 0)
+func (s *DeliveryService) SendByFileID(ctx context.Context, chatID int64, variant MediaVariant, replyMarkup any, customTitle string) (SentFile, error) {
+	return s.SendByFileIDTimed(ctx, chatID, variant, replyMarkup, 0, customTitle)
 }
 
-func (s *DeliveryService) SendByFileIDTimed(ctx context.Context, chatID int64, variant MediaVariant, replyMarkup any, elapsed time.Duration) (SentFile, error) {
+func (s *DeliveryService) SendByFileIDTimed(ctx context.Context, chatID int64, variant MediaVariant, replyMarkup any, elapsed time.Duration, customTitle string) (SentFile, error) {
 	start := time.Now()
-	caption := CaptionWithElapsed(variant, elapsed)
-	msg, err := s.sendFileIDViaCloud(ctx, chatID, variant, caption, replyMarkup)
+	caption := CaptionWithElapsed(variant, elapsed, customTitle)
+	msg, err := s.sendFileIDViaCloud(ctx, chatID, variant, caption, replyMarkup, customTitle)
 	if err != nil {
 		return SentFile{}, err
 	}
 	return sentFromMessage(msg, variant.VariantType, time.Since(start))
 }
 
-func (s *DeliveryService) SendLocal(ctx context.Context, chatID int64, localPath string, variant MediaVariant, replyMarkup any) (SentFile, error) {
-	return s.SendLocalTimed(ctx, chatID, localPath, variant, replyMarkup, 0)
+func (s *DeliveryService) SendLocal(ctx context.Context, chatID int64, localPath string, variant MediaVariant, replyMarkup any, customTitle string) (SentFile, error) {
+	return s.SendLocalTimed(ctx, chatID, localPath, variant, replyMarkup, 0, customTitle)
 }
 
-func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, localPath string, variant MediaVariant, replyMarkup any, elapsed time.Duration) (SentFile, error) {
+func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, localPath string, variant MediaVariant, replyMarkup any, elapsed time.Duration, customTitle string) (SentFile, error) {
 	start := time.Now()
 	st, err := s.CurrentSettings(ctx)
 	if err != nil {
@@ -129,7 +129,7 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 		}
 	}
 
-	caption := CaptionWithElapsed(variant, elapsed)
+	caption := CaptionWithElapsed(variant, elapsed, customTitle)
 	var msg tgbotapi.Message
 	method := "sendCloudUpload"
 	if mode == "local" {
@@ -147,13 +147,13 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 			}
 		}
 
-		msg, err = s.sendMultipartLocalAPI(ctx, chatID, localPath, variant, caption, replyMarkup)
+		msg, err = s.sendMultipartLocalAPI(ctx, chatID, localPath, variant, caption, replyMarkup, customTitle)
 		if err != nil && !isOverCloudLimit {
 			// Fallback to cloud only for small files
-			msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup)
+			msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup, customTitle)
 		}
 	} else {
-		msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup)
+		msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup, customTitle)
 	}
 	if err != nil {
 		return SentFile{}, err
@@ -192,11 +192,15 @@ func (s *DeliveryService) CurrentSettings(ctx context.Context) (settings.Setting
 	}, nil
 }
 
-func (s *DeliveryService) sendCloudUpload(chatID int64, localPath string, variant MediaVariant, caption string, replyMarkup any) (tgbotapi.Message, error) {
+func (s *DeliveryService) sendCloudUpload(chatID int64, localPath string, variant MediaVariant, caption string, replyMarkup any, customTitle string) (tgbotapi.Message, error) {
 	if variant.VariantType == VariantAudio {
 		cfg := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(localPath))
 		cfg.Caption = caption
 		cfg.ReplyMarkup = replyMarkup
+		if customTitle != "" {
+			cfg.Title = customTitle
+			cfg.Performer = "Instagram Bot"
+		}
 		return s.bot.Send(cfg)
 	}
 	cfg := tgbotapi.NewVideo(chatID, tgbotapi.FilePath(localPath))
@@ -209,7 +213,7 @@ func (s *DeliveryService) sendCloudUpload(chatID int64, localPath string, varian
 	return s.bot.Send(cfg)
 }
 
-func (s *DeliveryService) sendFileIDViaCloud(ctx context.Context, chatID int64, variant MediaVariant, caption string, replyMarkup any) (tgbotapi.Message, error) {
+func (s *DeliveryService) sendFileIDViaCloud(ctx context.Context, chatID int64, variant MediaVariant, caption string, replyMarkup any, customTitle string) (tgbotapi.Message, error) {
 	values := url.Values{}
 	values.Set("chat_id", strconv.FormatInt(chatID, 10))
 	values.Set("caption", caption)
@@ -218,6 +222,10 @@ func (s *DeliveryService) sendFileIDViaCloud(ctx context.Context, chatID int64, 
 	if variant.VariantType == VariantAudio {
 		method = "sendAudio"
 		values.Set("audio", variant.TelegramFileID)
+		if customTitle != "" {
+			values.Set("title", customTitle)
+			values.Set("performer", "Instagram Bot")
+		}
 	} else {
 		values.Set("video", variant.TelegramFileID)
 		values.Set("supports_streaming", "true")
@@ -235,7 +243,7 @@ func maskToken(urlStr, token string) string {
 	return strings.Replace(urlStr, token, "BOT_TOKEN_MASKED", -1)
 }
 
-func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int64, localPath string, variant MediaVariant, caption string, replyMarkup any) (tgbotapi.Message, error) {
+func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int64, localPath string, variant MediaVariant, caption string, replyMarkup any, customTitle string) (tgbotapi.Message, error) {
 	absPath, err := filepath.Abs(localPath)
 	if err != nil {
 		return tgbotapi.Message{}, err
@@ -271,6 +279,14 @@ func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int6
 	if variant.VariantType == VariantAudio {
 		method = "sendAudio"
 		fieldName = "audio"
+		if customTitle != "" {
+			if err := writer.WriteField("title", customTitle); err != nil {
+				return tgbotapi.Message{}, err
+			}
+			if err := writer.WriteField("performer", "Instagram Bot"); err != nil {
+				return tgbotapi.Message{}, err
+			}
+		}
 	} else {
 		if err := writer.WriteField("supports_streaming", "true"); err != nil {
 			return tgbotapi.Message{}, err
@@ -398,12 +414,15 @@ func (s *DeliveryService) request(ctx context.Context, endpoint, method string, 
 	return msg, nil
 }
 
-func Caption(v MediaVariant) string {
+func Caption(v MediaVariant, customTitle string) string {
+	if customTitle != "" {
+		return fmt.Sprintf("🎬 %s\n\nInstagram %s | %s", customTitle, v.VariantType, DisplayQuality(v.Quality))
+	}
 	return fmt.Sprintf("Instagram %s | %s", v.VariantType, DisplayQuality(v.Quality))
 }
 
-func CaptionWithElapsed(v MediaVariant, elapsed time.Duration) string {
-	caption := Caption(v)
+func CaptionWithElapsed(v MediaVariant, elapsed time.Duration, customTitle string) string {
+	caption := Caption(v, customTitle)
 	if elapsed <= 0 {
 		return caption
 	}

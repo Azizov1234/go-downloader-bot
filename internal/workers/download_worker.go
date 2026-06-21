@@ -99,11 +99,20 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 	}
 	format := w.formats.For(payload.VariantType, payload.Quality)
 	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
-	if payload.VariantType == media.VariantVideo && videoLimit > 0 {
-		info, probeErr := w.downloader.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
-		if probeErr != nil {
+	var info downloader.ProbeInfo
+	if payload.CustomTitle == "" || (payload.VariantType == media.VariantVideo && videoLimit > 0) {
+		var probeErr error
+		info, probeErr = w.downloader.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
+		if probeErr == nil {
+			if payload.CustomTitle == "" && info.Title != "" {
+				payload.CustomTitle = truncateTitle(info.Title, 100)
+			}
+		} else {
 			w.logger.Warn("yt-dlp probe skipped after error", "error", probeErr)
 		}
+	}
+
+	if payload.VariantType == media.VariantVideo && videoLimit > 0 {
 		size := knownSize(info)
 		if size > 0 && bytesToMB(size) > videoLimit {
 			sizeMB := bytesToMB(size)
@@ -241,4 +250,18 @@ func tooLargeVideoText(st settings.Settings, limitMB, sizeMB int64) string {
 		return telegram.CloudVideoTooLarge(limitMB, sizeMB)
 	}
 	return telegram.TooLargeVideo(limitMB, sizeMB)
+}
+
+func truncateTitle(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\t", " ")
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }

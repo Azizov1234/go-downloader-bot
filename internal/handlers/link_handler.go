@@ -24,6 +24,9 @@ func (r *Router) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	if r.admin.TryHandleInput(ctx, msg) {
 		return
 	}
+	if r.tryHandleUserRenameInput(ctx, msg) {
+		return
+	}
 	if msg.IsCommand() {
 		switch msg.Command() {
 		case "start":
@@ -112,7 +115,7 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		variantID := cacheResult.Variant.ID
 		downloadID, _ := r.media.CreateDownload(ctx, user.ID, &variantID, "SUCCESS", true, cacheResult.Took)
 		_ = downloadID
-		_, sendErr := r.delivery.SendByFileIDTimed(ctx, msg.Chat.ID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID), time.Since(requestStarted))
+		_, sendErr := r.delivery.SendByFileIDTimed(ctx, msg.Chat.ID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID), time.Since(requestStarted), "")
 		if sendErr == nil {
 			r.media.MarkDaily(ctx, media.VariantVideo, true, "SUCCESS", false)
 			_ = r.users.IncrementDownloads(ctx, user.ID)
@@ -131,5 +134,26 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		r.send(msg.Chat.ID, telegram.UniversalErrorMessage, nil)
 		return
 	}
-	r.send(msg.Chat.ID, telegram.SelectionText(st.VariantType, st.Quality), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
+	r.send(msg.Chat.ID, telegram.SelectionText(st.VariantType, st.Quality, st.CustomTitle), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
+}
+
+func (r *Router) tryHandleUserRenameInput(ctx context.Context, msg *tgbotapi.Message) bool {
+	key := "pending_rename:" + strconvFormat(msg.From.ID)
+	token, err := r.redis.Get(ctx, key).Result()
+	if err != nil {
+		return false
+	}
+	_ = r.redis.Del(ctx, key).Err()
+
+	st, err := r.getSelection(ctx, token)
+	if err != nil {
+		r.send(msg.Chat.ID, "Tanlov eskirgan. Linkni qayta yuboring.", nil)
+		return true
+	}
+
+	st.CustomTitle = strings.TrimSpace(msg.Text)
+	_ = r.saveSelection(ctx, token, st)
+
+	r.send(msg.Chat.ID, telegram.SelectionText(st.VariantType, st.Quality, st.CustomTitle), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
+	return true
 }

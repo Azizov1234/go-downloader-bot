@@ -74,12 +74,13 @@ type selectionState struct {
 	Quality            media.Quality     `json:"quality"`
 	UserID             int64             `json:"user_id"`
 	ChatID             int64             `json:"chat_id"`
+	CustomTitle        string            `json:"custom_title,omitempty"`
 }
 
 func NewRouter(dep Dependencies) *Router {
 	adminHandler := admin.NewHandler(admin.Dependencies{
 		Bot: dep.Bot, Redis: dep.Redis, Settings: dep.Settings, Admins: dep.Admins,
-		Stats: dep.Stats, Logs: dep.Logs, AdminLogs: dep.AdminLogs, Delivery: dep.Delivery,
+		Users: dep.Users, Stats: dep.Stats, Logs: dep.Logs, AdminLogs: dep.AdminLogs, Delivery: dep.Delivery,
 	})
 	return &Router{
 		bot: dep.Bot, cfg: dep.Config, logger: dep.Logger, redis: dep.Redis,
@@ -164,6 +165,10 @@ func (r *Router) saveSelection(ctx context.Context, token string, st selectionSt
 
 func (r *Router) deleteSelection(ctx context.Context, token string) {
 	_ = r.redis.Del(ctx, "selection:"+token).Err()
+}
+
+func (r *Router) setPendingRename(ctx context.Context, telegramID int64, token string) {
+	_ = r.redis.Set(ctx, "pending_rename:"+strconvFormat(telegramID), token, 5*time.Minute).Err()
 }
 
 func randomToken() string {

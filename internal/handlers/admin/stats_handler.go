@@ -3,7 +3,7 @@ package admin
 import (
 	"context"
 
-	"instagram-downloader-bot/internal/telegram"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func (h *Handler) showStats(ctx context.Context, chatID int64, messageID int) {
@@ -11,5 +11,8 @@ func (h *Handler) showStats(ctx context.Context, chatID int64, messageID int) {
 	if err != nil {
 		text = "Statistikani o'qib bo'lmadi."
 	}
-	h.edit(chatID, messageID, text, telegram.AdminKeyboard())
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Orqaga", "admin:home")),
+	)
+	h.edit(chatID, messageID, text, kb)
 }

@@ -25,8 +25,7 @@ func (h *Handler) showAdmins(ctx context.Context, chatID int64, messageID int) {
 	}
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("➕ ADMIN", "admin:add:ADMIN"),
-			tgbotapi.NewInlineKeyboardButtonData("➕ MODERATOR", "admin:add:MODERATOR"),
+			tgbotapi.NewInlineKeyboardButtonData("➕ ADMIN QO'SHISH", "admin:add:ADMIN"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🗑 O'chirish", "admin:remove"),

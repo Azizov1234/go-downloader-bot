@@ -38,14 +38,43 @@ func (s *Service) Summary(ctx context.Context) (string, error) {
 	`).Scan(&audio, &video)
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(oversized_rejected_count),0) FROM daily_stats`).Scan(&oversized)
 
+	var todayUsers, todayDownloads, todaySuccess, activeUsers24h int64
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE created_at::date = CURRENT_DATE`).Scan(&todayUsers)
+	_ = s.db.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE status='SUCCESS')
+		FROM downloads WHERE created_at::date = CURRENT_DATE
+	`).Scan(&todayDownloads, &todaySuccess)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM downloads WHERE created_at >= now() - interval '24 hours'`).Scan(&activeUsers24h)
+
 	var avgDownload, avgSend, avgTotal float64
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(AVG(download_ms),0), COALESCE(AVG(send_ms),0), COALESCE(AVG(total_ms),0) FROM downloads`).Scan(&avgDownload, &avgSend, &avgTotal)
 
 	queueLines := s.queueStats()
 	quality, _ := s.QualityStats(ctx)
 	return fmt.Sprintf(
-		"Statistika\n\nUsers: %d\nDownloads: %d\nSuccess: %d\nFailed: %d\nCache hit: %d\nCache miss: %d\nVideo: %d\nAudio: %d\nOversized: %d\n\nAvg download: %.0f ms\nAvg send: %.0f ms\nAvg total: %.0f ms\n\nQuality:\n%s\n\nQueue:\n%s",
-		users, downloads, success, failed, cacheHit, cacheMiss, video, audio, oversized, avgDownload, avgSend, avgTotal, quality, queueLines,
+		"📊 Statistika\n\n" +
+			"👥 Jami foydalanuvchilar: %d\n" +
+			"✨ Bugun qo'shilganlar: %d\n" +
+			"🔥 Faol userlar (oxirgi 24s): %d\n\n" +
+			"📥 Jami yuklashlar: %d\n" +
+			"✅ Muvaffaqiyatli: %d\n" +
+			"❌ Xatolar: %d\n" +
+			"⚡ Kesh orqali (Hit): %d\n" +
+			"🔄 Keshsiz (Miss): %d\n" +
+			"📹 Video yuklamalar: %d\n" +
+			"🎵 Audio yuklamalar: %d\n" +
+			"⚠️ Limitdan oshganlar: %d\n\n" +
+			"📅 Bugungi yuklashlar: %d\n" +
+			"📅 Bugungi muvaffaqiyatli: %d\n\n" +
+			"⏱️ O'rtacha yuklash vaqti: %.0f ms\n" +
+			"⏱️ O'rtacha yuborish vaqti: %.0f ms\n" +
+			"⏱️ Jami o'rtacha vaqt: %.0f ms\n\n" +
+			"Quality:\n%s\n\n" +
+			"Queue:\n%s",
+		users, todayUsers, activeUsers24h,
+		downloads, success, failed, cacheHit, cacheMiss, video, audio, oversized,
+		todayDownloads, todaySuccess,
+		avgDownload, avgSend, avgTotal, quality, queueLines,
 	), nil
 }
 

@@ -18,15 +18,18 @@ const (
 	SendFailedMessage          = "Media yuklandi, lekin Telegramga yuborishda xatolik bo'ldi."
 )
 
-func SelectionText(variantType media.VariantType, quality media.Quality) string {
+func SelectionText(variantType media.VariantType, quality media.Quality, customTitle string) string {
 	var b strings.Builder
 	b.WriteString(InstagramAcceptedMessage)
-	b.WriteString("\n\nVideo default: Asl holati\nAudio: MP3\n\nKerak bo'lsa sifatni o'zgartiring:\n\n")
+	if customTitle != "" {
+		b.WriteString(fmt.Sprintf("\n\n✍️ Nomi: %s", customTitle))
+	}
+	b.WriteString("\n\nKerakli formatni tanlang:\n\n")
 	b.WriteString("Tanlov: ")
 	if variantType == media.VariantAudio {
 		b.WriteString("AUDIO MP3")
 	} else {
-		b.WriteString("VIDEO " + media.DisplayQuality(quality))
+		b.WriteString("VIDEO")
 	}
 	return b.String()
 }
@@ -36,7 +39,7 @@ func TooLargeVideo(limitMB int64, sizeMB int64) string {
 }
 
 func CloudVideoTooLarge(limitMB int64, sizeMB int64) string {
-	return fmt.Sprintf("Video hajmi juda katta.\n\nCloud Bot API limiti: %d MB\nVideo hajmi: %d MB\n\nPastroq sifatni tanlang:\n480p\nEng kichik hajm\n\n2GB gacha video yuborish uchun Local Telegram Bot API Server kerak.", limitMB, sizeMB)
+	return fmt.Sprintf("Video hajmi juda katta.\n\nCloud Bot API limiti: %d MB\nVideo hajmi: %d MB\n\n2GB gacha video yuborish uchun Local Telegram Bot API Server kerak.", limitMB, sizeMB)
 }
 
 func TooLargeAudio(limitMB int64, sizeMB int64) string {

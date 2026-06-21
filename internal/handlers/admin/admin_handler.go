@@ -22,6 +22,7 @@ type Handler struct {
 	bot       *tgbotapi.BotAPI
 	redis     *redis.Client
 	settings  *settings.Service
+	users     *users.Service
 	admins    *users.AdminService
 	stats     *stats.Service
 	logs      *logs.ErrorLogService
@@ -33,6 +34,7 @@ type Dependencies struct {
 	Bot       *tgbotapi.BotAPI
 	Redis     *redis.Client
 	Settings  *settings.Service
+	Users     *users.Service
 	Admins    *users.AdminService
 	Stats     *stats.Service
 	Logs      *logs.ErrorLogService
@@ -41,7 +43,10 @@ type Dependencies struct {
 }
 
 func NewHandler(dep Dependencies) *Handler {
-	return &Handler{bot: dep.Bot, redis: dep.Redis, settings: dep.Settings, admins: dep.Admins, stats: dep.Stats, logs: dep.Logs, adminLogs: dep.AdminLogs, delivery: dep.Delivery}
+	return &Handler{
+		bot: dep.Bot, redis: dep.Redis, settings: dep.Settings, users: dep.Users,
+		admins: dep.Admins, stats: dep.Stats, logs: dep.Logs, adminLogs: dep.AdminLogs, delivery: dep.Delivery,
+	}
 }
 
 func (h *Handler) Show(ctx context.Context, chatID, telegramID int64) {
@@ -71,23 +76,44 @@ func (h *Handler) HandleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		h.showLogs(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
 	case data == "admin:admins":
 		h.showAdmins(ctx, cb.Message.Chat.ID, cb.Message.MessageID)
-	case data == "admin:add:ADMIN" || data == "admin:add:MODERATOR":
+	case data == "admin:add:ADMIN":
 		if adminUser.Role != "SUPERADMIN" {
 			h.send(cb.Message.Chat.ID, "Faqat SUPERADMIN admin qo'sha oladi.", nil)
 			return
 		}
-		role := strings.TrimPrefix(data, "admin:add:")
+		role := "ADMIN"
 		h.setPending(ctx, cb.From.ID, "add_admin:"+role)
-		h.send(cb.Message.Chat.ID, "Telegram ID yuboring.", nil)
+		h.send(cb.Message.Chat.ID, "Telegram ID yoki Username yuboring. (Masalan: @username yoki 12345678):", nil)
 	case data == "admin:remove":
 		if adminUser.Role != "SUPERADMIN" {
 			h.send(cb.Message.Chat.ID, "Faqat SUPERADMIN admin o'chira oladi.", nil)
 			return
 		}
 		h.setPending(ctx, cb.From.ID, "remove_admin")
-		h.send(cb.Message.Chat.ID, "O'chiriladigan admin Telegram ID sini yuboring.", nil)
-	case data == "admin:users":
-		h.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Userlar bo'limi: user status va umumiy son statistikada ko'rsatiladi.", telegram.AdminKeyboard())
+		h.send(cb.Message.Chat.ID, "O'chiriladigan admin Telegram ID yoki Username yuboring. (Masalan: @username):", nil)
+	case data == "admin:users" || strings.HasPrefix(data, "admin:users:"):
+		page := 1
+		if strings.HasPrefix(data, "admin:users:") {
+			page, _ = strconv.Atoi(strings.TrimPrefix(data, "admin:users:"))
+		}
+		if page < 1 {
+			page = 1
+		}
+		h.showUsers(ctx, cb.Message.Chat.ID, cb.Message.MessageID, page)
+	case strings.HasPrefix(data, "admin:user:view:"):
+		id, _ := strconv.ParseInt(strings.TrimPrefix(data, "admin:user:view:"), 10, 64)
+		h.showUserProfile(ctx, cb.Message.Chat.ID, cb.Message.MessageID, id)
+	case strings.HasPrefix(data, "admin:user:status:"):
+		parts := strings.Split(data, ":")
+		if len(parts) == 5 {
+			id, _ := strconv.ParseInt(parts[3], 10, 64)
+			status := parts[4]
+			_ = h.users.SetStatus(ctx, id, status)
+			h.showUserProfile(ctx, cb.Message.Chat.ID, cb.Message.MessageID, id)
+		}
+	case data == "admin:user:search":
+		h.setPending(ctx, cb.From.ID, "search_user")
+		h.send(cb.Message.Chat.ID, "🔍 User qidirish uchun matn yuboring (ism, username yoki telegram ID):", nil)
 	case data == "admin:downloads":
 		h.edit(cb.Message.Chat.ID, cb.Message.MessageID, "Downloadlar bo'limi: queue va performance metrikalari statistikada jamlangan.", telegram.AdminKeyboard())
 	case data == "admin:donate":
@@ -172,19 +198,33 @@ func (h *Handler) TryHandleInput(ctx context.Context, msg *tgbotapi.Message) boo
 		h.send(msg.Chat.ID, "Donat matni saqlandi.", nil)
 	case strings.HasPrefix(mode, "add_admin:"):
 		role := strings.TrimPrefix(mode, "add_admin:")
-		telegramID, err := strconv.ParseInt(strings.TrimSpace(msg.Text), 10, 64)
-		if err != nil || telegramID <= 0 {
-			h.send(msg.Chat.ID, "To'g'ri Telegram ID kiriting.", nil)
-			return true
+		input := strings.TrimSpace(msg.Text)
+		var telegramID int64
+		if id, err := strconv.ParseInt(input, 10, 64); err == nil && id > 0 {
+			telegramID = id
+		} else {
+			u, err := h.users.GetByUsername(ctx, input)
+			if err != nil {
+				h.send(msg.Chat.ID, "Ushbu user topilmadi. Avval u botga start bosgan bo'lishi kerak.", nil)
+				return true
+			}
+			telegramID = u.TelegramID
 		}
 		_ = h.admins.Add(ctx, telegramID, role)
 		h.adminLogs.Write(ctx, msg.From.ID, "admins.add", fmt.Sprintf("%d=%s", telegramID, role))
 		h.send(msg.Chat.ID, "Admin saqlandi.", nil)
 	case mode == "remove_admin":
-		telegramID, err := strconv.ParseInt(strings.TrimSpace(msg.Text), 10, 64)
-		if err != nil || telegramID <= 0 {
-			h.send(msg.Chat.ID, "To'g'ri Telegram ID kiriting.", nil)
-			return true
+		input := strings.TrimSpace(msg.Text)
+		var telegramID int64
+		if id, err := strconv.ParseInt(input, 10, 64); err == nil && id > 0 {
+			telegramID = id
+		} else {
+			u, err := h.users.GetByUsername(ctx, input)
+			if err != nil {
+				h.send(msg.Chat.ID, "Ushbu user topilmadi.", nil)
+				return true
+			}
+			telegramID = u.TelegramID
 		}
 		if telegramID == msg.From.ID {
 			h.send(msg.Chat.ID, "O'zingizni o'chira olmaysiz.", nil)
@@ -193,6 +233,9 @@ func (h *Handler) TryHandleInput(ctx context.Context, msg *tgbotapi.Message) boo
 		_ = h.admins.Remove(ctx, telegramID)
 		h.adminLogs.Write(ctx, msg.From.ID, "admins.remove", strconv.FormatInt(telegramID, 10))
 		h.send(msg.Chat.ID, "Admin o'chirildi.", nil)
+	case mode == "search_user":
+		query := strings.TrimSpace(msg.Text)
+		h.searchUsers(ctx, msg.Chat.ID, query)
 	default:
 		return false
 	}
