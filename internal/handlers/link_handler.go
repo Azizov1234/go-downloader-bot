@@ -49,19 +49,19 @@ func (r *Router) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	text := strings.TrimSpace(msg.Text)
 	switch text {
-	case "Havola yuborish":
+	case "🔗 Havola yuborish", "Havola yuborish":
 		r.send(msg.Chat.ID, "Instagram link yuboring.", telegram.UserMenu())
 		return
-	case "Saqlanganlar":
+	case "📂 Saqlanganlar", "Saqlanganlar":
 		r.handleSaved(ctx, msg.Chat.ID, msg.From.ID, 1, 0)
 		return
-	case "Profil":
+	case "👤 Profil", "Profil":
 		r.handleProfile(ctx, msg)
 		return
-	case "Donat":
+	case "💳 Donat", "Donat":
 		r.handleDonate(ctx, msg)
 		return
-	case "Qo'llanma":
+	case "ℹ️ Qo'llanma", "Qo'llanma":
 		st, _ := r.settings.Get(ctx)
 		r.send(msg.Chat.ID, st.HelpText, telegram.UserMenu())
 		return
