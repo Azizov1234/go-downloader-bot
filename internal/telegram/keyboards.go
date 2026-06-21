@@ -26,10 +26,14 @@ func SelectionKeyboard(token string, variantType media.VariantType, quality medi
 	video := "📹 Video"
 	audio := "🎵 Audio MP3"
 	if variantType == media.VariantVideo {
-		video += " ✅"
+		video += " ☑️"
+	} else {
+		video += " ⬜"
 	}
 	if variantType == media.VariantAudio {
-		audio += " ✅"
+		audio += " ☑️"
+	} else {
+		audio += " ⬜"
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -97,22 +101,28 @@ func AdminKeyboard() tgbotapi.InlineKeyboardMarkup {
 func AdminSettingsKeyboard(online, maintenance bool, apiMode string) tgbotapi.InlineKeyboardMarkup {
 	onlineText := "🟢 Online"
 	if online {
-		onlineText += " ✅"
+		onlineText += " ☑️"
+	} else {
+		onlineText += " ⬜"
 	}
 	offlineText := "🔴 Offline"
 	if !online {
-		offlineText += " ✅"
+		offlineText += " ☑️"
+	} else {
+		offlineText += " ⬜"
 	}
-	maintenanceText := "🔧 Texnik ishlar: OFF"
+	maintenanceText := "🔧 Texnik ishlar: OFF ⬜"
 	if maintenance {
-		maintenanceText = "⚠️ Texnik ishlar: ON ✅"
+		maintenanceText = "⚠️ Texnik ishlar: ON ☑️"
 	}
 	cloudText := "☁️ Cloud mode"
 	localText := "💻 Local mode"
 	if apiMode == "local" {
-		localText += " ✅"
+		localText += " ☑️"
+		cloudText += " ⬜"
 	} else {
-		cloudText += " ✅"
+		cloudText += " ☑️"
+		localText += " ⬜"
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(cb(onlineText, "admin:set:online"), cb(offlineText, "admin:set:offline")),
@@ -147,7 +157,7 @@ func cb(text, data string) tgbotapi.InlineKeyboardButton {
 
 func mark(text string, selected bool) string {
 	if selected {
-		return text + " ✅"
+		return text + " ☑️"
 	}
-	return text
+	return text + " ⬜"
 }
