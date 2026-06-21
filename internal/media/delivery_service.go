@@ -98,7 +98,7 @@ func (s *DeliveryService) SendLocal(ctx context.Context, chatID int64, localPath
 
 func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, localPath string, variant MediaVariant, replyMarkup any, elapsed time.Duration) (SentFile, error) {
 	start := time.Now()
-	st, err := s.currentSettings(ctx)
+	st, err := s.CurrentSettings(ctx)
 	if err != nil {
 		return SentFile{}, err
 	}
@@ -112,7 +112,18 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 	caption := CaptionWithElapsed(variant, elapsed)
 	var msg tgbotapi.Message
 	if mode == "local" {
+		isLarge := sizeMB > st.TelegramCloudMaxUploadMB
+		if isLarge {
+			if healthErr := s.HealthCheck(ctx); healthErr != nil {
+				return SentFile{}, &LocalBotAPIError{URL: s.cfg.TelegramLocalAPIURL, Err: healthErr}
+			}
+		}
+
 		msg, err = s.sendLocalPath(ctx, chatID, localPath, variant, caption, replyMarkup)
+		if err != nil && !isLarge {
+			// Fallback to cloud only for small files
+			msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup)
+		}
 	} else {
 		msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup)
 	}
@@ -130,7 +141,11 @@ func (s *DeliveryService) HealthCheck(ctx context.Context) error {
 	return err
 }
 
-func (s *DeliveryService) currentSettings(ctx context.Context) (settings.Settings, error) {
+func (s *DeliveryService) Config() config.Config {
+	return s.cfg
+}
+
+func (s *DeliveryService) CurrentSettings(ctx context.Context) (settings.Settings, error) {
 	if s.settings != nil {
 		st, err := s.settings.Get(ctx)
 		if err == nil {

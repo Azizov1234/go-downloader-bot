@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"instagram-downloader-bot/internal/media"
@@ -30,7 +31,7 @@ func SelectionText(variantType media.VariantType, quality media.Quality) string 
 }
 
 func TooLargeVideo(limitMB int64, sizeMB int64) string {
-	return fmt.Sprintf("Video hajmi juda katta.\n\nAdmin belgilagan limit: %d MB\nVideo hajmi: %d MB\n\nPastroq sifatni tanlang:\n\n720p\n480p\nEng kichik hajm", limitMB, sizeMB)
+	return fmt.Sprintf("Video hajmi juda katta.\n\nLocal Bot API limiti: %d MB\nVideo hajmi: %d MB", limitMB, sizeMB)
 }
 
 func CloudVideoTooLarge(limitMB int64, sizeMB int64) string {
@@ -45,8 +46,14 @@ func TelegramUploadTooLarge(sizeMB int64) string {
 	return CloudVideoTooLarge(50, sizeMB)
 }
 
-func LocalBotAPIUnavailable() string {
-	return "Katta video yuborish serveri vaqtincha ishlamayapti.\nKeyinroq urinib ko'ring."
+func LocalBotAPIUnavailable(apiURL string) string {
+	host := "127.0.0.1:8081"
+	if apiURL != "" {
+		if u, err := url.Parse(apiURL); err == nil {
+			host = u.Host
+		}
+	}
+	return fmt.Sprintf("Local Telegram Bot API ishlamayapti yoki %s ulanmayapti", host)
 }
 
 func ProfileText(p users.Profile) string {

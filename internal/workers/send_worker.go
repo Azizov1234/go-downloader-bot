@@ -96,17 +96,43 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 func (w *SendWorker) handleLocalSendFailure(ctx context.Context, payload queue.SendTask, waiters []queue.Recipient, variantID int64, sendErr error) {
 	text := telegram.UniversalErrorMessage
 	oversized := isRequestTooLarge(sendErr) || media.IsTelegramFileTooLarge(sendErr)
-	if limitMB, sizeMB, ok := media.TelegramLimit(sendErr); ok {
-		if limitMB <= 50 {
-			text = telegram.CloudVideoTooLarge(limitMB, sizeMB)
+
+	st, _ := w.delivery.CurrentSettings(ctx)
+	mode := "cloud"
+	if st.TelegramAPIMode != "" {
+		mode = strings.ToLower(strings.TrimSpace(st.TelegramAPIMode))
+	}
+	limitMB := int64(50)
+	if mode == "local" {
+		if st.TelegramLocalMaxUploadMB > 0 {
+			limitMB = st.TelegramLocalMaxUploadMB
 		} else {
-			text = telegram.TooLargeVideo(limitMB, sizeMB)
+			limitMB = 2000
+		}
+	} else {
+		if st.TelegramCloudMaxUploadMB > 0 {
+			limitMB = st.TelegramCloudMaxUploadMB
+		}
+	}
+
+	if limitMBVal, sizeMBVal, ok := media.TelegramLimit(sendErr); ok {
+		if mode == "local" {
+			text = telegram.TooLargeVideo(limitMBVal, sizeMBVal)
+		} else {
+			text = telegram.CloudVideoTooLarge(limitMBVal, sizeMBVal)
 		}
 	} else if isRequestTooLarge(sendErr) {
-		text = telegram.TelegramUploadTooLarge(bytesToMB(payload.Metadata.FileSize))
+		fileSizeMB := bytesToMB(payload.Metadata.FileSize)
+		if mode == "local" {
+			text = telegram.TooLargeVideo(limitMB, fileSizeMB)
+		} else {
+			text = telegram.CloudVideoTooLarge(50, fileSizeMB)
+		}
 	}
+
 	if media.IsLocalBotAPIUnavailable(sendErr) {
-		text = telegram.LocalBotAPIUnavailable()
+		apiURL := w.delivery.Config().TelegramLocalAPIURL
+		text = telegram.LocalBotAPIUnavailable(apiURL)
 		_ = w.queue.EnqueueNotification(ctx, queue.NotificationTask{Text: "Local Bot API server ishlamayapti: " + sendErr.Error()})
 	}
 	for _, r := range waiters {

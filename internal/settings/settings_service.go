@@ -51,6 +51,25 @@ func (s *Service) EnsureDefaults(ctx context.Context, cfg config.Config) error {
 		cfg.TelegramUseLocalFilePath, cfg.RequireLocalBotAPIForLargeFiles,
 		"Instagram havolasini yuboring.", "Public yoki ruxsatli Instagram link yuboring.",
 		cfg.DonateCardNumber, cfg.DonateCardOwner, cfg.DonateText)
+	if err != nil {
+		return err
+	}
+
+	if cfg.TelegramAPIMode == "local" {
+		_, err = s.db.Exec(ctx, `
+			UPDATE bot_settings
+			SET telegram_api_mode = 'local',
+			    telegram_local_max_upload_mb = $1,
+			    telegram_max_upload_mb = $2,
+			    max_video_file_size_mb = $3,
+			    max_audio_file_size_mb = $4,
+			    telegram_use_local_file_path = $5,
+			    require_local_bot_api_for_large_files = $6
+			WHERE id = 1
+		`, cfg.TelegramLocalMaxUploadMB, cfg.TelegramMaxUploadMB,
+			cfg.MaxVideoFileSizeMB, cfg.MaxAudioFileSizeMB,
+			cfg.TelegramUseLocalFilePath, cfg.RequireLocalBotAPIForLargeFiles)
+	}
 	return err
 }
 

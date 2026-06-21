@@ -54,6 +54,24 @@ func main() {
 	if err := settingsService.EnsureDefaults(ctx, cfg); err != nil {
 		log.Fatal(err)
 	}
+	st, err := settingsService.Get(ctx)
+	if err != nil {
+		logg.Error("failed to get settings for logging", "error", err)
+	} else {
+		effectiveLimit := st.TelegramCloudMaxUploadMB
+		if st.TelegramAPIMode == "local" {
+			effectiveLimit = st.TelegramLocalMaxUploadMB
+		}
+		logg.Info("active telegram api mode",
+			"telegram_api_mode", st.TelegramAPIMode,
+			"local_max_mb", st.TelegramLocalMaxUploadMB,
+			"cloud_max_mb", st.TelegramCloudMaxUploadMB,
+			"effective_upload_limit_mb", effectiveLimit,
+			"local_api_url", cfg.TelegramLocalAPIURL,
+		)
+		log.Printf("active telegram api mode=%s effective_upload_limit_mb=%d local_api_url=%s",
+			st.TelegramAPIMode, effectiveLimit, cfg.TelegramLocalAPIURL)
+	}
 	adminService := users.NewAdminService(pool)
 	if err := adminService.EnsureSuperAdmin(ctx, cfg.SuperAdminTelegramID); err != nil {
 		log.Fatal(err)
