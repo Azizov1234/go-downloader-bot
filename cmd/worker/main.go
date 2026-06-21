@@ -98,14 +98,18 @@ func main() {
 		log.Fatal(err)
 	}
 	delivery := media.NewDeliveryService(bot.API, cfg, settingsService)
+	ytdlpEngine := downloader.YTDLP{Bin: cfg.YTDLPBin}
+	galleryDLEngine := downloader.GalleryDL{Bin: cfg.GalleryDLBin}
+	fallbackDownloader := downloader.NewFallbackDownloader(ytdlpEngine, galleryDLEngine, logg)
+
 	downloadWorker := workers.NewDownloadWorker(workers.DownloadWorkerDeps{
 		Bot: bot.API, Logger: logg,
-		YTDLP:   downloader.YTDLP{Bin: cfg.YTDLPBin},
-		FFProbe: downloader.FFProbe{Bin: cfg.FFprobeBin},
-		Formats: instagram.NewFormatBuilder(cfg.InstagramFormats),
-		Cookies: instagram.Cookies{Use: cfg.InstagramUseCookies, File: cfg.InstagramCookiesFile},
-		Storage: storageService, Media: mediaService, Settings: settingsService,
-		Users: userService, Logs: errorLogs, Queue: queueClient, Locks: locks,
+		Downloader: fallbackDownloader,
+		FFProbe:    downloader.FFProbe{Bin: cfg.FFprobeBin},
+		Formats:    instagram.NewFormatBuilder(cfg.InstagramFormats),
+		Cookies:    instagram.Cookies{Use: cfg.InstagramUseCookies, File: cfg.InstagramCookiesFile},
+		Storage:    storageService, Media: mediaService, Settings: settingsService,
+		Users:      userService, Logs: errorLogs, Queue: queueClient, Locks: locks,
 		AllowOversized: cfg.AllowOversizedDownloads,
 	})
 	audioWorker := workers.NewAudioWorker(bot.API, downloader.FFMpeg{Bin: cfg.FFmpegBin}, storageService, settingsService, mediaService, queueClient, locks, cfg.AllowOversizedDownloads)

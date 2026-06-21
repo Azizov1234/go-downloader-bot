@@ -35,6 +35,7 @@ type Config struct {
 	TempFilesTTL                    time.Duration
 	CleanupInterval                 time.Duration
 	YTDLPBin                        string
+	GalleryDLBin                    string
 	FFmpegBin                       string
 	FFprobeBin                      string
 	InstagramUseCookies             bool
@@ -86,6 +87,7 @@ func Load() (Config, error) {
 		TempFilesTTL:                    time.Duration(utils.IntEnv("TEMP_FILES_TTL_MINUTES", 30)) * time.Minute,
 		CleanupInterval:                 time.Duration(utils.IntEnv("CLEANUP_INTERVAL_MINUTES", 10)) * time.Minute,
 		YTDLPBin:                        utils.StringEnv("YTDLP_BIN", "yt-dlp"),
+		GalleryDLBin:                    utils.StringEnv("GALLERYDL_BIN", "gallery-dl"),
 		FFmpegBin:                       utils.StringEnv("FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:                      utils.StringEnv("FFPROBE_BIN", "ffprobe"),
 		InstagramUseCookies:             utils.BoolEnv("INSTAGRAM_USE_COOKIES", true),

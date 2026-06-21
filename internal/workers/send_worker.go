@@ -122,12 +122,7 @@ func (w *SendWorker) handleLocalSendFailure(ctx context.Context, payload queue.S
 			text = telegram.CloudVideoTooLarge(limitMBVal, sizeMBVal)
 		}
 	} else if isRequestTooLarge(sendErr) {
-		fileSizeMB := bytesToMB(payload.Metadata.FileSize)
-		if mode == "local" {
-			text = telegram.TooLargeVideo(limitMB, fileSizeMB)
-		} else {
-			text = telegram.CloudVideoTooLarge(50, fileSizeMB)
-		}
+		text = telegram.TelegramUploadTooLarge(mode, limitMB, bytesToMB(payload.Metadata.FileSize))
 	}
 
 	if media.IsLocalBotAPIUnavailable(sendErr) {

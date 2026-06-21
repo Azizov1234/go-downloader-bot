@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +25,14 @@ var (
 	ErrLocalBotAPIUnavailable   = errors.New("local telegram bot api unavailable")
 	ErrLocalBotAPIConfiguration = errors.New("local telegram bot api is not configured")
 )
+
+var localFileSizeMBFunc = func(path string) int64 {
+	stat, err := os.Stat(path)
+	if err != nil || stat == nil {
+		return 0
+	}
+	return bytesToMegabytes(stat.Size())
+}
 
 type TelegramLimitError struct {
 	Mode    string
@@ -103,7 +112,7 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 		return SentFile{}, err
 	}
 	mode := telegramMode(st.TelegramAPIMode)
-	sizeMB := localFileSizeMB(localPath)
+	sizeMB := localFileSizeMBFunc(localPath)
 	limitMB := uploadLimitForMode(st, mode)
 	if limitMB > 0 && sizeMB > limitMB {
 		return SentFile{}, &TelegramLimitError{Mode: mode, LimitMB: limitMB, SizeMB: sizeMB}
@@ -111,16 +120,24 @@ func (s *DeliveryService) SendLocalTimed(ctx context.Context, chatID int64, loca
 
 	caption := CaptionWithElapsed(variant, elapsed)
 	var msg tgbotapi.Message
+	method := "sendCloudUpload"
 	if mode == "local" {
-		isLarge := sizeMB > st.TelegramCloudMaxUploadMB
-		if isLarge {
+		method = "sendLocalPath"
+	}
+
+	log.Printf("send local media mode=%s size_mb=%d effective_limit_mb=%d local_api_url=%s method=%s",
+		mode, sizeMB, limitMB, s.cfg.TelegramLocalAPIURL, method)
+
+	if mode == "local" {
+		isOverCloudLimit := sizeMB > st.TelegramCloudMaxUploadMB
+		if isOverCloudLimit {
 			if healthErr := s.HealthCheck(ctx); healthErr != nil {
 				return SentFile{}, &LocalBotAPIError{URL: s.cfg.TelegramLocalAPIURL, Err: healthErr}
 			}
 		}
 
 		msg, err = s.sendLocalPath(ctx, chatID, localPath, variant, caption, replyMarkup)
-		if err != nil && !isLarge {
+		if err != nil && !isOverCloudLimit {
 			// Fallback to cloud only for small files
 			msg, err = s.sendCloudUpload(chatID, localPath, variant, caption, replyMarkup)
 		}

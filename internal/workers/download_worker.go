@@ -26,7 +26,7 @@ import (
 type DownloadWorker struct {
 	bot            *tgbotapi.BotAPI
 	logger         *slog.Logger
-	ytdlp          downloader.YTDLP
+	downloader     downloader.Downloader
 	ffprobe        downloader.FFProbe
 	formats        instagram.FormatBuilder
 	cookies        instagram.Cookies
@@ -43,7 +43,7 @@ type DownloadWorker struct {
 type DownloadWorkerDeps struct {
 	Bot            *tgbotapi.BotAPI
 	Logger         *slog.Logger
-	YTDLP          downloader.YTDLP
+	Downloader     downloader.Downloader
 	FFProbe        downloader.FFProbe
 	Formats        instagram.FormatBuilder
 	Cookies        instagram.Cookies
@@ -59,7 +59,7 @@ type DownloadWorkerDeps struct {
 
 func NewDownloadWorker(dep DownloadWorkerDeps) *DownloadWorker {
 	return &DownloadWorker{
-		bot: dep.Bot, logger: dep.Logger, ytdlp: dep.YTDLP, ffprobe: dep.FFProbe, formats: dep.Formats,
+		bot: dep.Bot, logger: dep.Logger, downloader: dep.Downloader, ffprobe: dep.FFProbe, formats: dep.Formats,
 		cookies: dep.Cookies, storage: dep.Storage, media: dep.Media, settings: dep.Settings,
 		users: dep.Users, logs: dep.Logs, queue: dep.Queue, locks: dep.Locks,
 		allowOversized: dep.AllowOversized,
@@ -100,7 +100,7 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 	format := w.formats.For(payload.VariantType, payload.Quality)
 	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
 	if payload.VariantType == media.VariantVideo && videoLimit > 0 {
-		info, probeErr := w.ytdlp.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
+		info, probeErr := w.downloader.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
 		if probeErr != nil {
 			w.logger.Warn("yt-dlp probe skipped after error", "error", probeErr)
 		}
@@ -121,7 +121,7 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		w.locks.Release(ctx, lockKey)
 		return err
 	}
-	localPath, err := w.ytdlp.Download(ctx, payload.OriginalURL, format, dir, base, w.cookies.Args())
+	localPath, err := w.downloader.Download(ctx, payload.OriginalURL, format, dir, base, w.cookies.Args())
 	if err != nil {
 		w.failWaiters(ctx, payload, telegram.InstagramErrorMessage, err)
 		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), time.Since(start), 0, 0, time.Since(start), err.Error())

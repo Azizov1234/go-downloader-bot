@@ -42,8 +42,11 @@ func TooLargeAudio(limitMB int64, sizeMB int64) string {
 	return fmt.Sprintf("Audio hajmi juda katta.\n\nAdmin belgilagan limit: %d MB\nAudio hajmi: %d MB", limitMB, sizeMB)
 }
 
-func TelegramUploadTooLarge(sizeMB int64) string {
-	return CloudVideoTooLarge(50, sizeMB)
+func TelegramUploadTooLarge(mode string, limitMB, sizeMB int64) string {
+	if mode == "local" {
+		return TooLargeVideo(limitMB, sizeMB)
+	}
+	return CloudVideoTooLarge(limitMB, sizeMB)
 }
 
 func LocalBotAPIUnavailable(apiURL string) string {
