@@ -100,17 +100,33 @@ func IsVideoFormatNotFoundError(err error) bool {
 		strings.Contains(msg, "no matching formats found")
 }
 
-func (y YTDLP) Probe(ctx context.Context, rawURL, format string, cookiesArgs []string) (ProbeInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
-	defer cancel()
-	args := []string{
+func mandatoryFlags() []string {
+	return []string{
+		"-4",
 		"--no-playlist",
+		"--no-check-certificates",
+		"--socket-timeout", "15",
+		"--retries", "2",
+		"--fragment-retries", "2",
+		"--concurrent-fragments", "4",
+		"--no-write-info-json",
+		"--no-write-thumbnail",
+		"--no-write-comments",
+		"--no-simulate",
+		"--no-part",
+	}
+}
+
+func (y YTDLP) Probe(ctx context.Context, rawURL, format string, cookiesArgs []string) (ProbeInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // Probe: 10s max
+	defer cancel()
+	args := mandatoryFlags()
+	args = append(args,
 		"--format", format,
 		"--no-warnings",
 		"--dump-json",
 		"--skip-download",
-		"--retries", "3",
-	}
+	)
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	out, errOut, err := run(ctx, y.Bin, args...)
@@ -126,15 +142,14 @@ func (y YTDLP) Probe(ctx context.Context, rawURL, format string, cookiesArgs []s
 
 // ProbeRich runs yt-dlp with --dump-json (no format filter) to get full metadata including formats list
 func (y YTDLP) ProbeRich(ctx context.Context, rawURL string, cookiesArgs []string) (RichProbeInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // Probe: 10s max
 	defer cancel()
-	args := []string{
-		"--no-playlist",
+	args := mandatoryFlags()
+	args = append(args,
 		"--no-warnings",
 		"--dump-json",
 		"--skip-download",
-		"--retries", "2",
-	}
+	)
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	out, errOut, err := run(ctx, y.Bin, args...)
@@ -149,20 +164,22 @@ func (y YTDLP) ProbeRich(ctx context.Context, rawURL string, cookiesArgs []strin
 }
 
 func (y YTDLP) Download(ctx context.Context, rawURL, format, outputDir, baseName string, cookiesArgs []string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // yt-dlp: 30s context timeout
 	defer cancel()
+	
+	// Force fastest available video format if not audio
+	if !strings.Contains(format, "audio") {
+		format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+	}
+
 	template := filepath.Join(outputDir, baseName+".%(ext)s")
-	args := []string{
-		"--no-playlist",
+	args := mandatoryFlags()
+	args = append(args,
 		"--format", format,
 		"--merge-output-format", "mp4",
 		"--no-warnings",
-		"--retries", "3",
-		"--fragment-retries", "3",
-		"-N", "16",
-		"--concurrent-fragments", "16",
 		"-o", template,
-	}
+	)
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	_, errOut, err := run(ctx, y.Bin, args...)
@@ -181,17 +198,15 @@ func (y YTDLP) Download(ctx context.Context, rawURL, format, outputDir, baseName
 
 // DownloadThumbnail downloads the thumbnail/image of a post to outputDir/baseName.{ext}
 func (y YTDLP) DownloadThumbnail(ctx context.Context, rawURL, outputDir, baseName string, cookiesArgs []string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // yt-dlp: 30s context timeout
 	defer cancel()
-	args := []string{
-		"--no-playlist",
-		"--no-warnings",
+	args := mandatoryFlags()
+	args = append(args,
 		"--write-thumbnail",
 		"--convert-thumbnails", "jpg",
 		"--skip-download",
-		"--retries", "2",
 		"-o", filepath.Join(outputDir, baseName+".%(ext)s"),
-	}
+	)
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	_, errOut, err := run(ctx, y.Bin, args...)
@@ -217,15 +232,15 @@ func (y YTDLP) DownloadThumbnail(ctx context.Context, rawURL, outputDir, baseNam
 
 // DownloadAudio downloads only the audio stream of the given URL
 func (y YTDLP) DownloadAudio(ctx context.Context, rawURL, outputDir, baseName string, cookiesArgs []string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // yt-dlp: 30s context timeout
 	defer cancel()
-	args := []string{
-		"--no-playlist",
-		"--no-warnings",
-		"--format", "bestaudio[ext=m4a]/bestaudio",
-		"--retries", "2",
+	args := mandatoryFlags()
+	args = append(args,
+		"-x",
+		"--audio-format", "mp3",
+		"--audio-quality", "0",
 		"-o", filepath.Join(outputDir, baseName+".%(ext)s"),
-	}
+	)
 	args = append(args, cookiesArgs...)
 	args = append(args, rawURL)
 	_, errOut, err := run(ctx, y.Bin, args...)

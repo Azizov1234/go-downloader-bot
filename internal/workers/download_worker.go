@@ -109,7 +109,7 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 	probeStart := time.Now()
 	format := w.formats.For(payload.VariantType, payload.Quality)
 
-	// First try a rich probe (gets full formats list) to detect image-only posts
+	// Run ProbeRich exactly ONCE
 	var richInfo downloader.RichProbeInfo
 	var richErr error
 	if w.richProber != nil {
@@ -117,52 +117,36 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 	}
 	probeMs := time.Since(probeStart).Milliseconds()
 
-	// Detect image-only post
+	// If ProbeRich succeeds, check if it's image-only
 	if richErr == nil && richInfo.IsImageOnly() {
 		w.logger.Info("image-only post detected", "url", payload.OriginalURL, "probe_ms", probeMs)
 		return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart, probeMs)
 	}
 
-	// If rich probe itself failed with "no video formats" — treat as image
+	// If ProbeRich itself failed with "no video formats" — treat as image
 	if richErr != nil && downloader.IsVideoFormatNotFoundError(richErr) {
 		w.logger.Info("no video formats found, trying image flow", "url", payload.OriginalURL, "probe_ms", probeMs, "err", richErr)
 		return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart, probeMs)
 	}
 
 	// --- NORMAL VIDEO FLOW ---
-	// Use rich probe metadata if available to avoid redundant yt-dlp executions
 	var info downloader.ProbeInfo
 	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
+	var useGalleryDL bool
 
 	if richErr == nil {
+		// ProbeRich succeeded, never call Probe again
 		info = richInfo.ProbeInfo
 		if payload.CustomTitle == "" && info.Title != "" {
 			payload.CustomTitle = truncateTitle(info.Title, 100)
 		}
 	} else {
-		if payload.CustomTitle == "" || (payload.VariantType == media.VariantVideo && videoLimit > 0) {
-			basicProbeStart := time.Now()
-			probeResult, probeErr := w.downloader.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
-			if probeErr == nil {
-				info = probeResult
-				if payload.CustomTitle == "" && info.Title != "" {
-					payload.CustomTitle = truncateTitle(info.Title, 100)
-				}
-			} else {
-				// If probe failed with no video formats -> image flow
-				if downloader.IsVideoFormatNotFoundError(probeErr) {
-					w.logger.Info("basic probe no video formats, trying image flow",
-						"url", payload.OriginalURL,
-						"probe_ms", time.Since(basicProbeStart).Milliseconds())
-					return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart, time.Since(probeStart).Milliseconds())
-				}
-				w.logger.Warn("yt-dlp probe skipped after error", "error", probeErr,
-					"probe_ms", time.Since(basicProbeStart).Milliseconds())
-			}
-		}
+		// ProbeRich failed, immediately fallback to gallery-dl (no yt-dlp retry, no basic Probe retry)
+		w.logger.Warn("ProbeRich failed, immediately falling back to gallery-dl", "url", payload.OriginalURL, "error", richErr)
+		useGalleryDL = true
 	}
 
-	if payload.VariantType == media.VariantVideo && videoLimit > 0 {
+	if !useGalleryDL && payload.VariantType == media.VariantVideo && videoLimit > 0 {
 		size := knownSize(info)
 		if size > 0 && bytesToMB(size) > videoLimit {
 			sizeMB := bytesToMB(size)
@@ -182,7 +166,12 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		return err
 	}
 	downloadStart := time.Now()
-	localPath, err := w.downloader.Download(ctx, payload.OriginalURL, format, dir, base, w.cookies.Args())
+	
+	downloadCtx := ctx
+	if useGalleryDL {
+		downloadCtx = context.WithValue(ctx, downloader.SkipYTDLPKey, true)
+	}
+	localPath, err := w.downloader.Download(downloadCtx, payload.OriginalURL, format, dir, base, w.cookies.Args())
 	downloadMs := time.Since(downloadStart).Milliseconds()
 	if err != nil {
 		// If download fails with no video formats -> try image flow

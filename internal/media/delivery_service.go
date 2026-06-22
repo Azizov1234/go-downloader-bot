@@ -376,7 +376,11 @@ func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int6
 }
 
 func (s *DeliveryService) requestMultipart(ctx context.Context, endpoint, method, absPath string, body io.Reader, contentType string, fileSize int64, contentLength int64) (tgbotapi.Message, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	reqCtx := ctx
+	if fileSize > 50*1024*1024 {
+		reqCtx = context.WithoutCancel(ctx)
+	}
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return tgbotapi.Message{}, err
 	}

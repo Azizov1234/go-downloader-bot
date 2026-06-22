@@ -6,6 +6,10 @@ import (
 	"log/slog"
 )
 
+type contextKey string
+
+const SkipYTDLPKey contextKey = "skip_ytdlp"
+
 // FallbackDownloader tries yt-dlp first, then gallery-dl on failure.
 // It also implements RichProber by delegating to the inner YTDLP.
 type FallbackDownloader struct {
@@ -42,6 +46,20 @@ func (f FallbackDownloader) DownloadAudio(ctx context.Context, rawURL, outputDir
 }
 
 func (f FallbackDownloader) Download(ctx context.Context, rawURL, format, outputDir, baseName string, cookiesArgs []string) (string, error) {
+	if skip, _ := ctx.Value(SkipYTDLPKey).(bool); skip {
+		if f.Logger != nil {
+			f.Logger.Warn("ProbeRich failed, immediately falling back to gallery-dl", "url", rawURL)
+		}
+		fallbackPath, fallbackErr := f.GalleryDL.Download(ctx, rawURL, format, outputDir, baseName, cookiesArgs)
+		if fallbackErr == nil {
+			if f.Logger != nil {
+				f.Logger.Info("gallery-dl download succeeded", "path", fallbackPath)
+			}
+			return fallbackPath, nil
+		}
+		return "", fmt.Errorf("gallery-dl fallback download failed: %w", fallbackErr)
+	}
+
 	path, err := f.YTDLP.Download(ctx, rawURL, format, outputDir, baseName, cookiesArgs)
 	if err == nil {
 		return path, nil

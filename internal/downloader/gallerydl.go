@@ -16,7 +16,7 @@ func (g GalleryDL) Probe(ctx context.Context, rawURL, format string, cookiesArgs
 }
 
 func (g GalleryDL) Download(ctx context.Context, rawURL, format, outputDir, baseName string, cookiesArgs []string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second) // gallery-dl fallback: 25s context timeout
 	defer cancel()
 
 	var galleryCookies []string
@@ -28,6 +28,11 @@ func (g GalleryDL) Download(ctx context.Context, rawURL, format, outputDir, base
 	}
 
 	args := []string{
+		"--no-mtime",
+		"--no-download-archive",
+		"-q",
+		"--http-timeout", "10",
+		"--retries", "2",
 		"--destination", outputDir,
 		"--option", fmt.Sprintf("filename=%s.{extension}", baseName),
 	}
