@@ -86,7 +86,7 @@ func NewDeliveryService(bot *tgbotapi.BotAPI, cfg config.Config, settingsService
 		bot:      bot,
 		cfg:      cfg,
 		settings: settingsService,
-		http:     &http.Client{Timeout: 30 * time.Second},
+		http:     &http.Client{},
 	}
 }
 
@@ -261,80 +261,127 @@ func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int6
 	}
 	defer file.Close()
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-
-	if err := writer.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
-		return tgbotapi.Message{}, err
-	}
-	if err := writer.WriteField("caption", caption); err != nil {
-		return tgbotapi.Message{}, err
-	}
-
-	if replyMarkup != nil {
-		mBody, mErr := json.Marshal(replyMarkup)
-		if mErr == nil && len(mBody) > 0 && string(mBody) != "null" {
-			if err := writer.WriteField("reply_markup", string(mBody)); err != nil {
-				return tgbotapi.Message{}, err
-			}
-		}
-	}
-
-	method := "sendVideo"
-	fieldName := "video"
-	if variant.VariantType == VariantAudio {
-		method = "sendAudio"
-		fieldName = "audio"
-		if customTitle != "" {
-			if err := writer.WriteField("title", customTitle); err != nil {
-				return tgbotapi.Message{}, err
-			}
-			if err := writer.WriteField("performer", "Instagram Bot"); err != nil {
-				return tgbotapi.Message{}, err
-			}
-		}
-	} else if variant.VariantType == VariantImage {
-		method = "sendPhoto"
-		fieldName = "photo"
-	} else {
-		if err := writer.WriteField("supports_streaming", "true"); err != nil {
-			return tgbotapi.Message{}, err
-		}
-		if variant.Duration != nil {
-			if err := writer.WriteField("duration", strconv.Itoa(*variant.Duration)); err != nil {
-				return tgbotapi.Message{}, err
-			}
-		}
-	}
-
-	part, err := writer.CreateFormFile(fieldName, filepath.Base(absPath))
+	stat, err := file.Stat()
 	if err != nil {
 		return tgbotapi.Message{}, err
 	}
-	if _, err := io.Copy(part, file); err != nil {
+	fileSize := stat.Size()
+
+	// Calculate Content-Length using a dummy writer to avoid chunked encoding issues
+	dummyBody := &bytes.Buffer{}
+	dummyWriter := multipart.NewWriter(dummyBody)
+
+	writeFields := func(w *multipart.Writer) error {
+		if err := w.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+			return err
+		}
+		if err := w.WriteField("caption", caption); err != nil {
+			return err
+		}
+
+		if replyMarkup != nil {
+			mBody, mErr := json.Marshal(replyMarkup)
+			if mErr == nil && len(mBody) > 0 && string(mBody) != "null" {
+				if err := w.WriteField("reply_markup", string(mBody)); err != nil {
+					return err
+				}
+			}
+		}
+
+		if variant.VariantType == VariantAudio {
+			if customTitle != "" {
+				if err := w.WriteField("title", customTitle); err != nil {
+					return err
+				}
+				if err := w.WriteField("performer", "Instagram Bot"); err != nil {
+					return err
+				}
+			}
+		} else if variant.VariantType == VariantVideo {
+			if err := w.WriteField("supports_streaming", "true"); err != nil {
+				return err
+			}
+			if variant.Duration != nil {
+				if err := w.WriteField("duration", strconv.Itoa(*variant.Duration)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	if err := writeFields(dummyWriter); err != nil {
 		return tgbotapi.Message{}, err
 	}
 
-	if err := writer.Close(); err != nil {
-		return tgbotapi.Message{}, err
+	fieldName := "video"
+	if variant.VariantType == VariantAudio {
+		fieldName = "audio"
+	} else if variant.VariantType == VariantImage {
+		fieldName = "photo"
 	}
 
-	stat, _ := os.Stat(absPath)
-	var fileSize int64
-	if stat != nil {
-		fileSize = stat.Size()
+	_, err = dummyWriter.CreateFormFile(fieldName, filepath.Base(absPath))
+	if err != nil {
+		return tgbotapi.Message{}, err
+	}
+	dummyWriter.Close()
+
+	contentLength := int64(dummyBody.Len()) + fileSize
+	boundary := dummyWriter.Boundary()
+
+	// Stream the body using io.Pipe
+	pr, pw := io.Pipe()
+	realWriter := multipart.NewWriter(pw)
+	realWriter.SetBoundary(boundary)
+
+	go func() {
+		var writeErr error
+		defer func() {
+			if writeErr != nil {
+				pw.CloseWithError(writeErr)
+			} else {
+				pw.Close()
+			}
+		}()
+
+		if writeErr = writeFields(realWriter); writeErr != nil {
+			return
+		}
+
+		var part io.Writer
+		part, writeErr = realWriter.CreateFormFile(fieldName, filepath.Base(absPath))
+		if writeErr != nil {
+			return
+		}
+
+		buf := make([]byte, 1024*1024) // 1MB buffer for speed and efficiency
+		_, writeErr = io.CopyBuffer(part, file, buf)
+		if writeErr != nil {
+			return
+		}
+
+		writeErr = realWriter.Close()
+	}()
+
+	method := "sendVideo"
+	if variant.VariantType == VariantAudio {
+		method = "sendAudio"
+	} else if variant.VariantType == VariantImage {
+		method = "sendPhoto"
 	}
 
 	endpoint := apiMethodURL(s.cfg.TelegramLocalAPIURL, s.cfg.BotToken, method)
-	return s.requestMultipart(ctx, endpoint, method, absPath, body, writer.FormDataContentType(), fileSize)
+	return s.requestMultipart(ctx, endpoint, method, absPath, pr, realWriter.FormDataContentType(), fileSize, contentLength)
 }
 
-func (s *DeliveryService) requestMultipart(ctx context.Context, endpoint, method, absPath string, body *bytes.Buffer, contentType string, fileSize int64) (tgbotapi.Message, error) {
+func (s *DeliveryService) requestMultipart(ctx context.Context, endpoint, method, absPath string, body io.Reader, contentType string, fileSize int64, contentLength int64) (tgbotapi.Message, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return tgbotapi.Message{}, err
 	}
 	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = contentLength
 
 	resp, err := s.http.Do(req)
 	if err != nil {

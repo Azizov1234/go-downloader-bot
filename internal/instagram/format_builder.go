@@ -4,17 +4,30 @@ import (
 	"instagram-downloader-bot/internal/media"
 )
 
-// Default format strings — optimized for speed:
-// AUTO uses progressive mp4 up to 720p to avoid slow DASH merging.
-// Quality-specific formats target exact height caps.
+// Default format strings — speed-optimized:
+//
+// AUTO:
+//   - Sifatni pasaytirmaydi — original yuqori sifatni oladi
+//   - Progressive mp4 mavjud bo'lsa priority — merge kerak bo'lmaydi (tez)
+//   - Bo'lmasa DASH bestvideo+bestaudio merge qiladi (ffmpeg -c copy)
+//   - Eng so'nggi fallback: "best" (birlashtirilgan)
+//
+// ORIGINAL:
+//   - Hamma vaqt eng yuqori sifat, hech qanday cheklovsiz
+//
+// Specific resolutions:
+//   - Faqat height cap bor, ext+merge priority
 var defaultFormats = map[string]string{
-	// AUTO: prefer progressive mp4 <=720p, fall back to best <=720p, then best
-	string(media.QualityAuto): "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best",
+	// AUTO: progressive mp4 priority (merge yo'q → tez), keyin DASH merge, keyin best
+	string(media.QualityAuto): "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
 
-	// Specific resolutions
-	string(media.QualityP1080): "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]/best",
-	string(media.QualityP720):  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]",
-	string(media.QualityP480):  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]",
+	// ORIGINAL: hech qanday cheklov yo'q — eng yuqori sifat
+	string(media.QualityOriginal): "bestvideo+bestaudio/best",
+
+	// Specific resolutions — progressive priority, keyin DASH, keyin height-capped best
+	string(media.QualityP1080): "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+	string(media.QualityP720):  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]",
+	string(media.QualityP480):  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]",
 
 	// Audio only
 	string(media.QualityMP3): "bestaudio[ext=m4a]/bestaudio",
@@ -25,7 +38,7 @@ type FormatBuilder struct {
 }
 
 func NewFormatBuilder(formats map[string]string) FormatBuilder {
-	// Merge provided formats over defaults
+	// Merge user-provided formats over defaults (user overrides win)
 	merged := make(map[string]string, len(defaultFormats))
 	for k, v := range defaultFormats {
 		merged[k] = v
@@ -51,5 +64,5 @@ func (b FormatBuilder) For(variantType media.VariantType, quality media.Quality)
 	if f := b.formats[string(media.QualityAuto)]; f != "" {
 		return f
 	}
-	return "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best"
+	return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best"
 }

@@ -159,6 +159,8 @@ func (y YTDLP) Download(ctx context.Context, rawURL, format, outputDir, baseName
 		"--no-warnings",
 		"--retries", "3",
 		"--fragment-retries", "3",
+		"-N", "16",
+		"--concurrent-fragments", "16",
 		"-o", template,
 	}
 	args = append(args, cookiesArgs...)

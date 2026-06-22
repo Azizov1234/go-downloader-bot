@@ -115,7 +115,7 @@ func main() {
 		AllowOversized: cfg.AllowOversizedDownloads,
 	})
 	audioWorker := workers.NewAudioWorker(bot.API, downloader.FFMpeg{Bin: cfg.FFmpegBin}, storageService, settingsService, mediaService, queueClient, locks, cfg.AllowOversizedDownloads)
-	sendWorker := workers.NewSendWorker(bot.API, delivery, mediaService, userService, queueClient, storageService, locks, errorLogs)
+	sendWorker := workers.NewSendWorker(bot.API, logg, delivery, mediaService, userService, queueClient, storageService, locks, errorLogs)
 	cleanupWorker := workers.NewCleanupWorker(cleanup)
 	notificationWorker := workers.NewNotificationWorker(bot.API, cfg)
 

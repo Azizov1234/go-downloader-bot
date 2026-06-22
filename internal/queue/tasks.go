@@ -44,6 +44,7 @@ type AudioConvertTask struct {
 	DownloadTask
 	SourcePath string `json:"source_path"`
 	OutputPath string `json:"output_path"`
+	ProbeMs    int64  `json:"probe_ms"`
 	DownloadMs int64  `json:"download_ms"`
 }
 
@@ -53,8 +54,10 @@ type SendTask struct {
 	FileID     string         `json:"file_id"`
 	UniqueID   string         `json:"unique_id"`
 	Metadata   media.Metadata `json:"metadata"`
+	ProbeMs    int64          `json:"probe_ms"`
 	DownloadMs int64          `json:"download_ms"`
 	ConvertMs  int64          `json:"convert_ms"`
+	FFmpegMs   int64          `json:"ffmpeg_ms"`
 }
 
 type NotificationTask struct {

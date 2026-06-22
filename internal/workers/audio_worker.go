@@ -73,5 +73,12 @@ func (w *AudioWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		return nil
 	}
 	md := media.Metadata{FileSize: size}
-	return w.queue.EnqueueSend(ctx, queue.SendTask{DownloadTask: payload.DownloadTask, LocalPath: payload.OutputPath, Metadata: md, DownloadMs: payload.DownloadMs, ConvertMs: time.Since(start).Milliseconds()})
+	return w.queue.EnqueueSend(ctx, queue.SendTask{
+		DownloadTask: payload.DownloadTask,
+		LocalPath:    payload.OutputPath,
+		Metadata:     md,
+		ProbeMs:      payload.ProbeMs,
+		DownloadMs:   payload.DownloadMs,
+		ConvertMs:    time.Since(start).Milliseconds(),
+	})
 }

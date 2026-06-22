@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 type SendWorker struct {
 	bot      *tgbotapi.BotAPI
+	logger   *slog.Logger
 	delivery *media.DeliveryService
 	media    *media.Service
 	users    *users.Service
@@ -30,8 +32,8 @@ type SendWorker struct {
 	logs     *logs.ErrorLogService
 }
 
-func NewSendWorker(bot *tgbotapi.BotAPI, delivery *media.DeliveryService, mediaService *media.Service, usersService *users.Service, queueClient *queue.Client, storageService storage.Service, locks *queue.Locks, logsService *logs.ErrorLogService) *SendWorker {
-	return &SendWorker{bot: bot, delivery: delivery, media: mediaService, users: usersService, queue: queueClient, storage: storageService, locks: locks, logs: logsService}
+func NewSendWorker(bot *tgbotapi.BotAPI, logger *slog.Logger, delivery *media.DeliveryService, mediaService *media.Service, usersService *users.Service, queueClient *queue.Client, storageService storage.Service, locks *queue.Locks, logsService *logs.ErrorLogService) *SendWorker {
+	return &SendWorker{bot: bot, logger: logger, delivery: delivery, media: mediaService, users: usersService, queue: queueClient, storage: storageService, locks: locks, logs: logsService}
 }
 
 func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
@@ -62,6 +64,15 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		}
 		_ = sent
 		w.markSuccess(ctx, payload.Recipient, variant.ID, payload, time.Since(start))
+		w.logger.Info("delivery timing summary (cached)",
+			"url", payload.OriginalURL,
+			"probe_ms", int64(0),
+			"download_ms", int64(0),
+			"ffmpeg_ms", int64(0),
+			"convert_ms", int64(0),
+			"send_ms", time.Since(start).Milliseconds(),
+			"total_ms", time.Since(payload.QueuedAt).Milliseconds(),
+		)
 		return nil
 	}
 
@@ -97,6 +108,17 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		return err
 	}
 	w.markSuccess(ctx, first, variant.ID, payload, sent.SendDuration)
+
+	w.logger.Info("delivery timing summary (fresh)",
+		"url", payload.OriginalURL,
+		"probe_ms", payload.ProbeMs,
+		"download_ms", payload.DownloadMs,
+		"ffmpeg_ms", payload.FFmpegMs,
+		"convert_ms", payload.ConvertMs,
+		"send_ms", sent.SendDuration.Milliseconds(),
+		"total_ms", time.Since(payload.QueuedAt).Milliseconds(),
+	)
+
 	for _, r := range waiters[1:] {
 		_, err := w.delivery.SendByFileIDTimed(ctx, r.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt), payload.CustomTitle)
 		if err == nil {
