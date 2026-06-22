@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-
-	"instagram-downloader-bot/internal/media"
 )
 
 func UserMenu() tgbotapi.ReplyKeyboardMarkup {
@@ -22,33 +20,6 @@ func UserMenu() tgbotapi.ReplyKeyboardMarkup {
 	)
 }
 
-func SelectionKeyboard(token string, variantType media.VariantType, quality media.Quality) tgbotapi.InlineKeyboardMarkup {
-	video := "📹 Video"
-	audio := "🎵 Audio MP3"
-	if variantType == media.VariantVideo {
-		video += " ☑️"
-	} else {
-		video += " ⬜"
-	}
-	if variantType == media.VariantAudio {
-		audio += " ☑️"
-	} else {
-		audio += " ⬜"
-	}
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			cb(video, "sel:"+token+":type:video"),
-			cb(audio, "sel:"+token+":type:audio"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			cb("✍️ Nomni tahrirlash", "sel:"+token+":rename"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			cb("📥 Yuklash", "sel:"+token+":download"),
-			cb("❌ Bekor qilish", "sel:"+token+":cancel"),
-		),
-	)
-}
 
 func MediaActionsKeyboard(variantID int64) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
@@ -143,11 +114,4 @@ func LimitPresetKeyboard(kind string, values []int64) tgbotapi.InlineKeyboardMar
 
 func cb(text, data string) tgbotapi.InlineKeyboardButton {
 	return tgbotapi.NewInlineKeyboardButtonData(text, data)
-}
-
-func mark(text string, selected bool) string {
-	if selected {
-		return text + " ☑️"
-	}
-	return text + " ⬜"
 }

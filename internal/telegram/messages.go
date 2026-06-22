@@ -5,34 +5,16 @@ import (
 	"net/url"
 	"strings"
 
-	"instagram-downloader-bot/internal/media"
 	"instagram-downloader-bot/internal/saved"
 	"instagram-downloader-bot/internal/users"
 )
 
 const (
 	UnsupportedPlatformMessage = "Hozircha faqat Instagram linklari qo'llab-quvvatlanadi."
-	InstagramAcceptedMessage   = "Instagram link qabul qilindi.\n\nNima qilib beray?"
 	InstagramErrorMessage      = "Instagram videosini olib bo'lmadi.\nPost private, o'chirilgan yoki Instagram vaqtincha cheklagan bo'lishi mumkin."
 	UniversalErrorMessage      = "Media yuklab bo'lmadi.\nLink private bo'lishi, platforma cheklovi yoki vaqtinchalik xatolik sabab bo'lishi mumkin."
 	SendFailedMessage          = "Media yuklandi, lekin Telegramga yuborishda xatolik bo'ldi."
 )
-
-func SelectionText(variantType media.VariantType, quality media.Quality, customTitle string) string {
-	var b strings.Builder
-	b.WriteString(InstagramAcceptedMessage)
-	if customTitle != "" {
-		b.WriteString(fmt.Sprintf("\n\n✍️ Nomi: %s", customTitle))
-	}
-	b.WriteString("\n\nKerakli formatni tanlang:\n\n")
-	b.WriteString("Tanlov: ")
-	if variantType == media.VariantAudio {
-		b.WriteString("AUDIO MP3")
-	} else {
-		b.WriteString("VIDEO")
-	}
-	return b.String()
-}
 
 func TooLargeVideo(limitMB int64, sizeMB int64) string {
 	return fmt.Sprintf("Video hajmi juda katta.\n\nLocal Bot API limiti: %d MB\nVideo hajmi: %d MB", limitMB, sizeMB)

@@ -8,6 +8,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"instagram-downloader-bot/internal/media"
+	"instagram-downloader-bot/internal/queue"
 	"instagram-downloader-bot/internal/telegram"
 	"instagram-downloader-bot/internal/users"
 	apperrors "instagram-downloader-bot/pkg/errors"
@@ -22,9 +23,6 @@ func (r *Router) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 	if r.admin.TryHandleInput(ctx, msg) {
-		return
-	}
-	if r.tryHandleUserRenameInput(ctx, msg) {
 		return
 	}
 	if msg.IsCommand() {
@@ -107,17 +105,24 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		return
 	}
 
-	// Link darhol saqlanadi. Media file_id esa birinchi muvaffaqiyatli uploaddan keyin cache bo'ladi.
+	// Media file yozuvini darhol yaratamiz
 	_, _ = r.media.GetOrCreateMediaFile(ctx, parsed.OriginalURL, parsed.NormalizedURL, parsed.Shortcode)
 
-	cacheResult := r.cache.Lookup(ctx, parsed.NormalizedURL, media.VariantVideo, media.QualityAuto)
+	variantType := media.VariantVideo
+	quality := media.QualityAuto
+
+	// Cache tekshirish — mavjud bo'lsa darhol yuboramiz (0 kutish)
+	cacheResult := r.cache.Lookup(ctx, parsed.NormalizedURL, variantType, quality)
 	if cacheResult.Hit {
 		variantID := cacheResult.Variant.ID
-		downloadID, _ := r.media.CreateDownload(ctx, user.ID, &variantID, "SUCCESS", true, cacheResult.Took)
-		_ = downloadID
-		_, sendErr := r.delivery.SendByFileIDTimed(ctx, msg.Chat.ID, cacheResult.Variant, telegram.MediaActionsKeyboard(cacheResult.Variant.ID), time.Since(requestStarted), "")
+		_, _ = r.media.CreateDownload(ctx, user.ID, &variantID, "SUCCESS", true, cacheResult.Took)
+		_, sendErr := r.delivery.SendByFileIDTimed(
+			ctx, msg.Chat.ID, cacheResult.Variant,
+			telegram.MediaActionsKeyboard(cacheResult.Variant.ID),
+			time.Since(requestStarted), "",
+		)
 		if sendErr == nil {
-			r.media.MarkDaily(ctx, media.VariantVideo, true, "SUCCESS", false)
+			r.media.MarkDaily(ctx, variantType, true, "SUCCESS", false)
 			_ = r.users.IncrementDownloads(ctx, user.ID)
 			return
 		}
@@ -125,35 +130,43 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		r.logs.Write(ctx, &user.ID, "instagram", "cache_send", "cached file_id ishlamadi", sendErr)
 	}
 
-	st := selectionState{
-		OriginalURL: parsed.OriginalURL, NormalizedURL: parsed.NormalizedURL, InstagramShortcode: parsed.Shortcode,
-		VariantType: media.VariantVideo, Quality: media.QualityAuto, UserID: user.ID, ChatID: msg.Chat.ID,
-	}
-	token, err := r.setSelection(ctx, st)
+	// Kunlik limit tekshirish
+	limitReached, err := r.users.DailyLimitReached(ctx, user.ID, r.cfg.DailyUserDownloadLimit)
 	if err != nil {
 		r.send(msg.Chat.ID, telegram.UniversalErrorMessage, nil)
 		return
 	}
-	r.send(msg.Chat.ID, telegram.SelectionText(st.VariantType, st.Quality, st.CustomTitle), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
-}
-
-func (r *Router) tryHandleUserRenameInput(ctx context.Context, msg *tgbotapi.Message) bool {
-	key := "pending_rename:" + strconvFormat(msg.From.ID)
-	token, err := r.redis.Get(ctx, key).Result()
-	if err != nil {
-		return false
-	}
-	_ = r.redis.Del(ctx, key).Err()
-
-	st, err := r.getSelection(ctx, token)
-	if err != nil {
-		r.send(msg.Chat.ID, "Tanlov eskirgan. Linkni qayta yuboring.", nil)
-		return true
+	if limitReached {
+		r.send(msg.Chat.ID, "⚠️ Kunlik yuklab olish limiti tugadi.", nil)
+		return
 	}
 
-	st.CustomTitle = strings.TrimSpace(msg.Text)
-	_ = r.saveSelection(ctx, token, st)
-
-	r.send(msg.Chat.ID, telegram.SelectionText(st.VariantType, st.Quality, st.CustomTitle), telegram.SelectionKeyboard(token, st.VariantType, st.Quality))
-	return true
+	// So'ramasdan darhol navbatga qo'shamiz — Video, Auto sifat
+	downloadID, err := r.media.CreateDownload(ctx, user.ID, nil, "QUEUED", false, cacheResult.Took)
+	if err != nil {
+		r.send(msg.Chat.ID, telegram.UniversalErrorMessage, nil)
+		return
+	}
+	task := queue.DownloadTask{
+		Recipient: queue.Recipient{
+			ChatID:     msg.Chat.ID,
+			UserID:     user.ID,
+			DownloadID: downloadID,
+			Username:   msg.From.UserName,
+		},
+		DownloadID:         downloadID,
+		OriginalURL:        parsed.OriginalURL,
+		NormalizedURL:      parsed.NormalizedURL,
+		InstagramShortcode: parsed.Shortcode,
+		VariantType:        variantType,
+		Quality:            quality,
+		QueuedAt:           time.Now(),
+	}
+	if err := r.queue.EnqueueDownload(ctx, task); err != nil {
+		r.logs.Write(ctx, &user.ID, "instagram", "enqueue", "queuega qo'shib bo'lmadi", err)
+		r.send(msg.Chat.ID, telegram.UniversalErrorMessage, nil)
+		return
+	}
+	// Faqat qisqa xabar — video yetib kelguncha
+	r.send(msg.Chat.ID, "⏳ Yuklanmoqda...", nil)
 }

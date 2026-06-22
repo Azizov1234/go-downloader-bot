@@ -2,13 +2,9 @@ package handlers
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/redis/go-redis/v9"
@@ -66,17 +62,6 @@ type Dependencies struct {
 	AdminLogs *logs.AdminActionLogService
 }
 
-type selectionState struct {
-	OriginalURL        string            `json:"original_url"`
-	NormalizedURL      string            `json:"normalized_url"`
-	InstagramShortcode string            `json:"instagram_shortcode"`
-	VariantType        media.VariantType `json:"variant_type"`
-	Quality            media.Quality     `json:"quality"`
-	UserID             int64             `json:"user_id"`
-	ChatID             int64             `json:"chat_id"`
-	CustomTitle        string            `json:"custom_title,omitempty"`
-}
-
 func NewRouter(dep Dependencies) *Router {
 	adminHandler := admin.NewHandler(admin.Dependencies{
 		Bot: dep.Bot, Redis: dep.Redis, Settings: dep.Settings, Admins: dep.Admins,
@@ -131,50 +116,6 @@ func (r *Router) rateLimited(ctx context.Context, telegramID int64) bool {
 		_ = r.redis.Expire(ctx, key, r.cfg.RateLimitTTL).Err()
 	}
 	return err == nil && int(n) > r.cfg.RateLimitLimit
-}
-
-func (r *Router) setSelection(ctx context.Context, st selectionState) (string, error) {
-	token := randomToken()
-	body, err := json.Marshal(st)
-	if err != nil {
-		return "", err
-	}
-	err = r.redis.Set(ctx, "selection:"+token, body, 15*time.Minute).Err()
-	return token, err
-}
-
-func (r *Router) getSelection(ctx context.Context, token string) (selectionState, error) {
-	raw, err := r.redis.Get(ctx, "selection:"+token).Bytes()
-	if err != nil {
-		return selectionState{}, err
-	}
-	var st selectionState
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return selectionState{}, err
-	}
-	return st, nil
-}
-
-func (r *Router) saveSelection(ctx context.Context, token string, st selectionState) error {
-	body, err := json.Marshal(st)
-	if err != nil {
-		return err
-	}
-	return r.redis.Set(ctx, "selection:"+token, body, 15*time.Minute).Err()
-}
-
-func (r *Router) deleteSelection(ctx context.Context, token string) {
-	_ = r.redis.Del(ctx, "selection:"+token).Err()
-}
-
-func (r *Router) setPendingRename(ctx context.Context, telegramID int64, token string) {
-	_ = r.redis.Set(ctx, "pending_rename:"+strconvFormat(telegramID), token, 5*time.Minute).Err()
-}
-
-func randomToken() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
 }
 
 func strconvFormat(v int64) string {
