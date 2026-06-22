@@ -27,7 +27,9 @@ type DownloadWorker struct {
 	bot            *tgbotapi.BotAPI
 	logger         *slog.Logger
 	downloader     downloader.Downloader
+	richProber     downloader.RichProber
 	ffprobe        downloader.FFProbe
+	ffmpeg         downloader.FFMpeg
 	formats        instagram.FormatBuilder
 	cookies        instagram.Cookies
 	storage        storage.Service
@@ -44,7 +46,9 @@ type DownloadWorkerDeps struct {
 	Bot            *tgbotapi.BotAPI
 	Logger         *slog.Logger
 	Downloader     downloader.Downloader
+	RichProber     downloader.RichProber
 	FFProbe        downloader.FFProbe
+	FFMpeg         downloader.FFMpeg
 	Formats        instagram.FormatBuilder
 	Cookies        instagram.Cookies
 	Storage        storage.Service
@@ -59,9 +63,11 @@ type DownloadWorkerDeps struct {
 
 func NewDownloadWorker(dep DownloadWorkerDeps) *DownloadWorker {
 	return &DownloadWorker{
-		bot: dep.Bot, logger: dep.Logger, downloader: dep.Downloader, ffprobe: dep.FFProbe, formats: dep.Formats,
-		cookies: dep.Cookies, storage: dep.Storage, media: dep.Media, settings: dep.Settings,
-		users: dep.Users, logs: dep.Logs, queue: dep.Queue, locks: dep.Locks,
+		bot: dep.Bot, logger: dep.Logger, downloader: dep.Downloader,
+		richProber: dep.RichProber, ffprobe: dep.FFProbe, ffmpeg: dep.FFMpeg,
+		formats: dep.Formats, cookies: dep.Cookies, storage: dep.Storage,
+		media: dep.Media, settings: dep.Settings, users: dep.Users,
+		logs: dep.Logs, queue: dep.Queue, locks: dep.Locks,
 		allowOversized: dep.AllowOversized,
 	}
 }
@@ -71,6 +77,8 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return err
 	}
+
+	totalStart := time.Now()
 
 	if cached, err := w.media.FindCachedVariant(ctx, payload.NormalizedURL, payload.VariantType, payload.Quality); err == nil {
 		return w.queue.EnqueueSend(ctx, queue.SendTask{DownloadTask: payload, FileID: cached.TelegramFileID, UniqueID: cached.TelegramFileUniqueID})
@@ -90,25 +98,60 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		return err
 	}
 
-	start := time.Now()
 	st, err := w.settings.Get(ctx)
 	if err != nil {
 		w.failWaiters(ctx, payload, telegram.UniversalErrorMessage, err)
 		w.locks.Release(ctx, lockKey)
 		return err
 	}
+
+	// --- PROBE PHASE ---
+	probeStart := time.Now()
 	format := w.formats.For(payload.VariantType, payload.Quality)
-	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
+
+	// First try a rich probe (gets full formats list) to detect image-only posts
+	var richInfo downloader.RichProbeInfo
+	var richErr error
+	if w.richProber != nil {
+		richInfo, richErr = w.richProber.ProbeRich(ctx, payload.OriginalURL, w.cookies.Args())
+	}
+	probeMs := time.Since(probeStart).Milliseconds()
+
+	// Detect image-only post
+	if richErr == nil && richInfo.IsImageOnly() {
+		w.logger.Info("image-only post detected", "url", payload.OriginalURL, "probe_ms", probeMs)
+		return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart)
+	}
+
+	// If rich probe itself failed with "no video formats" — treat as image
+	if richErr != nil && downloader.IsVideoFormatNotFoundError(richErr) {
+		w.logger.Info("no video formats found, trying image flow", "url", payload.OriginalURL, "probe_ms", probeMs, "err", richErr)
+		return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart)
+	}
+
+	// --- NORMAL VIDEO FLOW ---
+	// Use basic probe only if needed (size check for video)
 	var info downloader.ProbeInfo
+	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
+
 	if payload.CustomTitle == "" || (payload.VariantType == media.VariantVideo && videoLimit > 0) {
-		var probeErr error
-		info, probeErr = w.downloader.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
+		basicProbeStart := time.Now()
+		probeResult, probeErr := w.downloader.Probe(ctx, payload.OriginalURL, format, w.cookies.Args())
 		if probeErr == nil {
+			info = probeResult
 			if payload.CustomTitle == "" && info.Title != "" {
 				payload.CustomTitle = truncateTitle(info.Title, 100)
 			}
 		} else {
-			w.logger.Warn("yt-dlp probe skipped after error", "error", probeErr)
+			// If probe failed with no video formats -> image flow
+			if downloader.IsVideoFormatNotFoundError(probeErr) {
+				w.logger.Info("basic probe no video formats, trying image flow",
+					"url", payload.OriginalURL,
+					"probe_ms", time.Since(basicProbeStart).Milliseconds())
+				return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart)
+			}
+			w.logger.Warn("yt-dlp probe skipped after error", "error", probeErr,
+				"probe_ms", time.Since(basicProbeStart).Milliseconds())
 		}
 	}
 
@@ -117,27 +160,46 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		if size > 0 && bytesToMB(size) > videoLimit {
 			sizeMB := bytesToMB(size)
 			w.failWaiters(ctx, payload, tooLargeVideoText(st, videoLimit, sizeMB), nil)
-			_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), 0, 0, 0, time.Since(start), "oversized")
+			_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), 0, 0, 0, time.Since(totalStart), "oversized")
 			w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", true)
 			w.locks.Release(ctx, lockKey)
 			return nil
 		}
 	}
 
+	// --- DOWNLOAD PHASE ---
 	dir, base, err := w.storage.DownloadBase(payload.Recipient.ChatID, payload.DownloadID, payload.Quality)
 	if err != nil {
 		w.failWaiters(ctx, payload, telegram.UniversalErrorMessage, err)
 		w.locks.Release(ctx, lockKey)
 		return err
 	}
+	downloadStart := time.Now()
 	localPath, err := w.downloader.Download(ctx, payload.OriginalURL, format, dir, base, w.cookies.Args())
+	downloadMs := time.Since(downloadStart).Milliseconds()
 	if err != nil {
+		// If download fails with no video formats -> try image flow
+		if downloader.IsVideoFormatNotFoundError(err) {
+			w.logger.Info("download no video formats, trying image flow",
+				"url", payload.OriginalURL, "download_ms", downloadMs)
+			w.locks.Release(ctx, lockKey)
+			return w.processImagePost(ctx, payload, richInfo, st, lockKey, totalStart)
+		}
+		w.logger.Error("download failed", "url", payload.OriginalURL,
+			"download_ms", downloadMs, "total_ms", time.Since(totalStart).Milliseconds())
 		w.failWaiters(ctx, payload, telegram.InstagramErrorMessage, err)
-		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), time.Since(start), 0, 0, time.Since(start), err.Error())
+		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), time.Duration(downloadMs)*time.Millisecond, 0, 0, time.Since(totalStart), err.Error())
 		w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", false)
 		w.locks.Release(ctx, lockKey)
 		return nil
 	}
+
+	w.logger.Info("download complete",
+		"url", payload.OriginalURL,
+		"probe_ms", probeMs,
+		"download_ms", downloadMs,
+		"total_ms", time.Since(totalStart).Milliseconds(),
+	)
 
 	if payload.VariantType == media.VariantAudio {
 		outPath, err := w.storage.AudioPath(payload.Recipient.ChatID, payload.DownloadID)
@@ -147,7 +209,10 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 			w.locks.Release(ctx, lockKey)
 			return err
 		}
-		return w.queue.EnqueueAudioConvert(ctx, queue.AudioConvertTask{DownloadTask: payload, SourcePath: localPath, OutputPath: outPath, DownloadMs: time.Since(start).Milliseconds()})
+		return w.queue.EnqueueAudioConvert(ctx, queue.AudioConvertTask{
+			DownloadTask: payload, SourcePath: localPath, OutputPath: outPath,
+			DownloadMs: downloadMs,
+		})
 	}
 
 	md, err := w.ffprobe.Metadata(ctx, localPath)
@@ -161,12 +226,123 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		_ = w.storage.RemoveSafe(localPath)
 		sizeMB := bytesToMB(md.FileSize)
 		w.failWaiters(ctx, payload, tooLargeVideoText(st, videoLimit, sizeMB), nil)
-		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), time.Since(start), 0, 0, time.Since(start), "oversized")
+		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), time.Duration(downloadMs)*time.Millisecond, 0, 0, time.Since(totalStart), "oversized")
 		w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", true)
 		w.locks.Release(ctx, lockKey)
 		return nil
 	}
-	return w.queue.EnqueueSend(ctx, queue.SendTask{DownloadTask: payload, LocalPath: localPath, Metadata: md, DownloadMs: time.Since(start).Milliseconds()})
+	return w.queue.EnqueueSend(ctx, queue.SendTask{
+		DownloadTask: payload, LocalPath: localPath, Metadata: md, DownloadMs: downloadMs,
+	})
+}
+
+// processImagePost handles image-only Instagram posts.
+// Flow:
+//  1. Download thumbnail (cover image)
+//  2. Try to download audio track
+//  3. If image + audio → ffmpeg → video MP4
+//  4. If image only → send as photo
+func (w *DownloadWorker) processImagePost(ctx context.Context, payload queue.DownloadTask, richInfo downloader.RichProbeInfo, st settings.Settings, lockKey string, totalStart time.Time) error {
+	if w.richProber == nil {
+		w.failWaiters(ctx, payload, telegram.UniversalErrorMessage, fmt.Errorf("rich prober not available"))
+		w.locks.Release(ctx, lockKey)
+		return nil
+	}
+
+	dir, base, err := w.storage.DownloadBase(payload.Recipient.ChatID, payload.DownloadID, payload.Quality)
+	if err != nil {
+		w.failWaiters(ctx, payload, telegram.UniversalErrorMessage, err)
+		w.locks.Release(ctx, lockKey)
+		return err
+	}
+
+	// 1. Download thumbnail
+	thumbStart := time.Now()
+	imagePath, thumbErr := w.richProber.DownloadThumbnail(ctx, payload.OriginalURL, dir, base+"_thumb", w.cookies.Args())
+	thumbMs := time.Since(thumbStart).Milliseconds()
+	if thumbErr != nil {
+		w.logger.Warn("thumbnail download failed", "url", payload.OriginalURL,
+			"thumb_ms", thumbMs, "err", thumbErr)
+		w.failWaiters(ctx, payload, telegram.InstagramErrorMessage, thumbErr)
+		_ = w.media.UpdateDownloadMetrics(ctx, payload.DownloadID, nil, "FAILED", time.Since(payload.QueuedAt), 0, 0, 0, time.Since(totalStart), thumbErr.Error())
+		w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", false)
+		w.locks.Release(ctx, lockKey)
+		return nil
+	}
+	defer func() { _ = w.storage.RemoveSafe(imagePath) }()
+
+	w.logger.Info("thumbnail downloaded", "path", imagePath, "thumb_ms", thumbMs)
+
+	// 2. Try to get audio
+	audioStart := time.Now()
+	audioPath, audioErr := w.richProber.DownloadAudio(ctx, payload.OriginalURL, dir, base+"_audio", w.cookies.Args())
+	audioMs := time.Since(audioStart).Milliseconds()
+	hasAudio := audioErr == nil && audioPath != ""
+
+	var finalPath string
+	var finalType media.VariantType
+	var ffmpegMs int64
+
+	if hasAudio {
+		// 3. ffmpeg: image + audio → video
+		defer func() { _ = w.storage.RemoveSafe(audioPath) }()
+		outputPath := base + "_img2vid.mp4"
+		outputPath = dir + "/" + outputPath
+
+		ffmpegStart := time.Now()
+		ffErr := w.ffmpeg.ImageToVideo(ctx, imagePath, audioPath, outputPath)
+		ffmpegMs = time.Since(ffmpegStart).Milliseconds()
+
+		if ffErr != nil {
+			w.logger.Warn("ffmpeg image-to-video failed, sending image only",
+				"url", payload.OriginalURL, "ffmpeg_ms", ffmpegMs, "err", ffErr)
+			// Fall through to image-only send
+			hasAudio = false
+		} else {
+			finalPath = outputPath
+			finalType = media.VariantVideo
+			w.logger.Info("ffmpeg image+audio → video done",
+				"path", finalPath, "audio_ms", audioMs, "ffmpeg_ms", ffmpegMs)
+		}
+	}
+
+	if !hasAudio {
+		// 4. Send as photo
+		finalPath = imagePath
+		finalType = media.VariantImage
+	}
+
+	w.logger.Info("image post ready to send",
+		"type", finalType, "path", finalPath,
+		"thumb_ms", thumbMs, "audio_ms", audioMs, "ffmpeg_ms", ffmpegMs,
+		"total_ms", time.Since(totalStart).Milliseconds(),
+	)
+
+	// Build a minimal variant for sending
+	// We override the variant type so send_worker knows what to do
+	imagePayload := payload
+	imagePayload.VariantType = finalType
+	if imagePayload.CustomTitle == "" && richInfo.ProbeInfo.Title != "" {
+		imagePayload.CustomTitle = truncateTitle(richInfo.ProbeInfo.Title, 100)
+	}
+
+	caption := ""
+	if !hasAudio && audioErr != nil {
+		caption = "ℹ️ Postda musiqa topilmadi, rasm sifatida yuborilmoqda."
+	}
+	_ = caption // used in send worker via CustomTitle
+
+	if err := w.queue.EnqueueSend(ctx, queue.SendTask{
+		DownloadTask: imagePayload,
+		LocalPath:    finalPath,
+		DownloadMs:   thumbMs + audioMs + ffmpegMs,
+	}); err != nil {
+		w.failWaiters(ctx, payload, telegram.UniversalErrorMessage, err)
+		w.locks.Release(ctx, lockKey)
+		return nil
+	}
+	w.locks.Release(ctx, lockKey)
+	return nil
 }
 
 func (w *DownloadWorker) failWaiters(ctx context.Context, payload queue.DownloadTask, text string, technical error) {

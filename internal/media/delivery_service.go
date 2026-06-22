@@ -203,6 +203,12 @@ func (s *DeliveryService) sendCloudUpload(chatID int64, localPath string, varian
 		}
 		return s.bot.Send(cfg)
 	}
+	if variant.VariantType == VariantImage {
+		cfg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(localPath))
+		cfg.Caption = caption
+		cfg.ReplyMarkup = replyMarkup
+		return s.bot.Send(cfg)
+	}
 	cfg := tgbotapi.NewVideo(chatID, tgbotapi.FilePath(localPath))
 	cfg.Caption = caption
 	cfg.SupportsStreaming = true
@@ -287,6 +293,9 @@ func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int6
 				return tgbotapi.Message{}, err
 			}
 		}
+	} else if variant.VariantType == VariantImage {
+		method = "sendPhoto"
+		fieldName = "photo"
 	} else {
 		if err := writer.WriteField("supports_streaming", "true"); err != nil {
 			return tgbotapi.Message{}, err
@@ -437,6 +446,16 @@ func sentFromMessage(msg tgbotapi.Message, variantType VariantType, took time.Du
 		}
 		out.FileID = msg.Audio.FileID
 		out.FileUniqueID = msg.Audio.FileUniqueID
+		return out, nil
+	}
+	if variantType == VariantImage {
+		if len(msg.Photo) == 0 {
+			return out, fmt.Errorf("telegram photo response has no file")
+		}
+		// Telegram returns multiple resolutions; last is highest quality
+		best := msg.Photo[len(msg.Photo)-1]
+		out.FileID = best.FileID
+		out.FileUniqueID = best.FileUniqueID
 		return out, nil
 	}
 	if msg.Video == nil {

@@ -105,7 +105,9 @@ func main() {
 	downloadWorker := workers.NewDownloadWorker(workers.DownloadWorkerDeps{
 		Bot: bot.API, Logger: logg,
 		Downloader: fallbackDownloader,
+		RichProber: fallbackDownloader,
 		FFProbe:    downloader.FFProbe{Bin: cfg.FFprobeBin},
+		FFMpeg:     downloader.FFMpeg{Bin: cfg.FFmpegBin},
 		Formats:    instagram.NewFormatBuilder(cfg.InstagramFormats),
 		Cookies:    instagram.Cookies{Use: cfg.InstagramUseCookies, File: cfg.InstagramCookiesFile},
 		Storage:    storageService, Media: mediaService, Settings: settingsService,

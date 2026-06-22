@@ -8,6 +8,7 @@ type Quality string
 const (
 	VariantVideo VariantType = "VIDEO"
 	VariantAudio VariantType = "AUDIO"
+	VariantImage VariantType = "IMAGE"
 
 	QualityAuto     Quality = "AUTO"
 	QualityOriginal Quality = "ORIGINAL"

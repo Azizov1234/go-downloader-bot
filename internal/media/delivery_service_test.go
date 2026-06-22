@@ -87,7 +87,7 @@ func TestSendLocalTimed_LocalMode_Allowed(t *testing.T) {
 		Quality:     QualityAuto,
 	}
 
-	sent, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0)
+	sent, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -125,7 +125,7 @@ func TestSendLocalTimed_CloudMode_Rejected(t *testing.T) {
 		Quality:     QualityAuto,
 	}
 
-	_, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0)
+	_, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0, "")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -159,7 +159,7 @@ func TestSendLocalTimed_LocalMode_Oversized(t *testing.T) {
 		Quality:     QualityAuto,
 	}
 
-	_, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0)
+	_, err := delivery.SendLocalTimed(context.Background(), 12345, tempFilePath, variant, nil, 0, "")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
