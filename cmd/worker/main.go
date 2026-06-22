@@ -98,7 +98,12 @@ func main() {
 		log.Fatal(err)
 	}
 	delivery := media.NewDeliveryService(bot.API, cfg, settingsService)
-	ytdlpEngine := downloader.YTDLP{Bin: cfg.YTDLPBin}
+	ytdlpEngine := downloader.YTDLP{
+		Bin:                 cfg.YTDLPBin,
+		ConcurrentFragments: cfg.YTDLPConcurrentFragments,
+		Retries:             cfg.YTDLPRetries,
+		FragmentRetries:     cfg.YTDLPFragmentRetries,
+	}
 	galleryDLEngine := downloader.GalleryDL{Bin: cfg.GalleryDLBin}
 	fallbackDownloader := downloader.NewFallbackDownloader(ytdlpEngine, galleryDLEngine, logg)
 

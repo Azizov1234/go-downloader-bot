@@ -11,8 +11,8 @@ import (
 
 const (
 	UnsupportedPlatformMessage = "Hozircha faqat Instagram linklari qo'llab-quvvatlanadi."
-	InstagramErrorMessage      = "Instagram videosini olib bo'lmadi.\nPost private, o'chirilgan yoki Instagram vaqtincha cheklagan bo'lishi mumkin."
-	UniversalErrorMessage      = "Media yuklab bo'lmadi.\nLink private bo'lishi, platforma cheklovi yoki vaqtinchalik xatolik sabab bo'lishi mumkin."
+	InstagramErrorMessage      = "Media yuklab bo‘lmadi. Link private, o‘chirilgan yoki platforma cheklovi bo‘lishi mumkin."
+	UniversalErrorMessage      = "Media yuklab bo‘lmadi. Link private, o‘chirilgan yoki platforma cheklovi bo‘lishi mumkin."
 	SendFailedMessage          = "Media yuklandi, lekin Telegramga yuborishda xatolik bo'ldi."
 )
 

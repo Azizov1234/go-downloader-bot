@@ -36,6 +36,9 @@ type Config struct {
 	TempFilesTTL                    time.Duration
 	CleanupInterval                 time.Duration
 	YTDLPBin                        string
+	YTDLPConcurrentFragments        int
+	YTDLPRetries                    int
+	YTDLPFragmentRetries            int
 	GalleryDLBin                    string
 	FFmpegBin                       string
 	FFprobeBin                      string
@@ -89,6 +92,9 @@ func Load() (Config, error) {
 		TempFilesTTL:                    time.Duration(utils.IntEnv("TEMP_FILES_TTL_MINUTES", 30)) * time.Minute,
 		CleanupInterval:                 time.Duration(utils.IntEnv("CLEANUP_INTERVAL_MINUTES", 10)) * time.Minute,
 		YTDLPBin:                        utils.StringEnv("YTDLP_BIN", "yt-dlp"),
+		YTDLPConcurrentFragments:        utils.IntEnv("YTDLP_CONCURRENT_FRAGMENTS", 16),
+		YTDLPRetries:                    utils.IntEnv("YTDLP_RETRIES", 3),
+		YTDLPFragmentRetries:            utils.IntEnv("YTDLP_FRAGMENT_RETRIES", 3),
 		GalleryDLBin:                    utils.StringEnv("GALLERYDL_BIN", "gallery-dl"),
 		FFmpegBin:                       utils.StringEnv("FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:                      utils.StringEnv("FFPROBE_BIN", "ffprobe"),

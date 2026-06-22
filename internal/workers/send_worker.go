@@ -65,13 +65,18 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		_ = sent
 		w.markSuccess(ctx, payload.Recipient, variant.ID, payload, time.Since(start))
 		w.logger.Info("delivery timing summary (cached)",
-			"url", payload.OriginalURL,
+			"cache_check_ms", payload.CacheCheckMs,
 			"probe_ms", int64(0),
 			"download_ms", int64(0),
-			"ffmpeg_ms", int64(0),
-			"convert_ms", int64(0),
+			"merge_ms", int64(0),
 			"send_ms", time.Since(start).Milliseconds(),
 			"total_ms", time.Since(payload.QueuedAt).Milliseconds(),
+			"file_size_mb", float64(payload.Metadata.FileSize) / (1024 * 1024),
+			"selected_format", payload.SelectedFormat,
+			"is_progressive", true,
+			"used_ffmpeg", false,
+			"cache_hit", true,
+			"method", "SendByFileID",
 		)
 		return nil
 	}
@@ -110,13 +115,18 @@ func (w *SendWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	w.markSuccess(ctx, first, variant.ID, payload, sent.SendDuration)
 
 	w.logger.Info("delivery timing summary (fresh)",
-		"url", payload.OriginalURL,
+		"cache_check_ms", payload.CacheCheckMs,
 		"probe_ms", payload.ProbeMs,
 		"download_ms", payload.DownloadMs,
-		"ffmpeg_ms", payload.FFmpegMs,
-		"convert_ms", payload.ConvertMs,
+		"merge_ms", payload.MergeMs,
 		"send_ms", sent.SendDuration.Milliseconds(),
 		"total_ms", time.Since(payload.QueuedAt).Milliseconds(),
+		"file_size_mb", float64(payload.Metadata.FileSize) / (1024 * 1024),
+		"selected_format", payload.SelectedFormat,
+		"is_progressive", payload.IsProgressive,
+		"used_ffmpeg", payload.UsedFFmpeg,
+		"cache_hit", payload.CacheHit,
+		"method", payload.Method,
 	)
 
 	for _, r := range waiters[1:] {

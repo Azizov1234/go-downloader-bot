@@ -38,6 +38,7 @@ type DownloadTask struct {
 	Quality            media.Quality     `json:"quality"`
 	QueuedAt           time.Time         `json:"queued_at"`
 	CustomTitle        string            `json:"custom_title,omitempty"`
+	CacheCheckMs       int64             `json:"cache_check_ms,omitempty"`
 }
 
 type AudioConvertTask struct {
@@ -50,14 +51,20 @@ type AudioConvertTask struct {
 
 type SendTask struct {
 	DownloadTask
-	LocalPath  string         `json:"local_path"`
-	FileID     string         `json:"file_id"`
-	UniqueID   string         `json:"unique_id"`
-	Metadata   media.Metadata `json:"metadata"`
-	ProbeMs    int64          `json:"probe_ms"`
-	DownloadMs int64          `json:"download_ms"`
-	ConvertMs  int64          `json:"convert_ms"`
-	FFmpegMs   int64          `json:"ffmpeg_ms"`
+	LocalPath      string         `json:"local_path"`
+	FileID         string         `json:"file_id"`
+	UniqueID       string         `json:"unique_id"`
+	Metadata       media.Metadata `json:"metadata"`
+	ProbeMs        int64          `json:"probe_ms"`
+	DownloadMs     int64          `json:"download_ms"`
+	ConvertMs      int64          `json:"convert_ms"`
+	FFmpegMs       int64          `json:"ffmpeg_ms"`
+	MergeMs        int64          `json:"merge_ms"`
+	SelectedFormat string         `json:"selected_format"`
+	IsProgressive  bool           `json:"is_progressive"`
+	UsedFFmpeg     bool           `json:"used_ffmpeg"`
+	CacheHit       bool           `json:"cache_hit"`
+	Method         string         `json:"method"`
 }
 
 type NotificationTask struct {

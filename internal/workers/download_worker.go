@@ -133,6 +133,7 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 	var info downloader.ProbeInfo
 	videoLimit := effectiveUploadLimit(st.MaxVideoFileSizeMB, telegramUploadLimit(st), w.allowOversized)
 	var useGalleryDL bool
+	var optFormat SelectedFormatInfo
 
 	if richErr == nil {
 		// ProbeRich succeeded, never call Probe again
@@ -140,10 +141,26 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		if payload.CustomTitle == "" && info.Title != "" {
 			payload.CustomTitle = truncateTitle(info.Title, 100)
 		}
+		optFormat = selectFormat(richInfo.Formats, payload.Quality, format)
+		format = optFormat.FormatID
+		w.logger.Info("format selection log",
+			"selected_format_id", optFormat.FormatID,
+			"selected_resolution", optFormat.Resolution,
+			"selected_filesize_mb", optFormat.FileSizeMB,
+			"is_progressive", optFormat.IsProgressive,
+			"needs_merge", optFormat.NeedsMerge,
+		)
 	} else {
 		// ProbeRich failed, immediately fallback to gallery-dl (no yt-dlp retry, no basic Probe retry)
 		w.logger.Warn("ProbeRich failed, immediately falling back to gallery-dl", "url", payload.OriginalURL, "error", richErr)
 		useGalleryDL = true
+		optFormat = SelectedFormatInfo{
+			FormatID:      format,
+			Resolution:    "unknown",
+			FileSizeMB:    0,
+			IsProgressive: false,
+			NeedsMerge:    true,
+		}
 	}
 
 	if !useGalleryDL && payload.VariantType == media.VariantVideo && videoLimit > 0 {
@@ -229,11 +246,17 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		return nil
 	}
 	return w.queue.EnqueueSend(ctx, queue.SendTask{
-		DownloadTask: payload,
-		LocalPath:    localPath,
-		Metadata:     md,
-		ProbeMs:      probeMs,
-		DownloadMs:   downloadMs,
+		DownloadTask:   payload,
+		LocalPath:      localPath,
+		Metadata:       md,
+		ProbeMs:        probeMs,
+		DownloadMs:     downloadMs,
+		MergeMs:        0,
+		SelectedFormat: optFormat.FormatID,
+		IsProgressive:  optFormat.IsProgressive,
+		UsedFFmpeg:     optFormat.NeedsMerge,
+		CacheHit:       false,
+		Method:         "sendMultipartLocalAPI",
 	})
 }
 
@@ -323,22 +346,31 @@ func (w *DownloadWorker) processImagePost(ctx context.Context, payload queue.Dow
 	// We override the variant type so send_worker knows what to do
 	imagePayload := payload
 	imagePayload.VariantType = finalType
-	if imagePayload.CustomTitle == "" && richInfo.ProbeInfo.Title != "" {
-		imagePayload.CustomTitle = truncateTitle(richInfo.ProbeInfo.Title, 100)
+	titleText := ""
+	if richInfo.ProbeInfo.Title != "" {
+		titleText = truncateTitle(richInfo.ProbeInfo.Title, 100)
 	}
-
-	caption := ""
-	if !hasAudio && audioErr != nil {
-		caption = "ℹ️ Postda musiqa topilmadi, rasm sifatida yuborilmoqda."
+	
+	warningText := "Bu post video emas. Rasm bo‘lsa, rasm sifatida yuboraman."
+	if titleText != "" {
+		imagePayload.CustomTitle = warningText + "\n\n" + titleText
+	} else {
+		imagePayload.CustomTitle = warningText
 	}
-	_ = caption // used in send worker via CustomTitle
 
 	if err := w.queue.EnqueueSend(ctx, queue.SendTask{
-		DownloadTask: imagePayload,
-		LocalPath:    finalPath,
-		ProbeMs:      probeMs,
-		DownloadMs:   thumbMs + audioMs,
-		FFmpegMs:     ffmpegMs,
+		DownloadTask:   imagePayload,
+		LocalPath:      finalPath,
+		Metadata:       media.Metadata{FileSize: 0}, // thumbnail size is small
+		ProbeMs:        probeMs,
+		DownloadMs:     thumbMs + audioMs,
+		FFmpegMs:       ffmpegMs,
+		MergeMs:        ffmpegMs,
+		SelectedFormat: "image",
+		IsProgressive:  !hasAudio,
+		UsedFFmpeg:     hasAudio,
+		CacheHit:       false,
+		Method:         "sendMultipartLocalAPI",
 	}); err != nil {
 		w.failWaiters(ctx, payload, telegram.UniversalErrorMessage, err)
 		w.locks.Release(ctx, lockKey)
@@ -443,4 +475,192 @@ func truncateTitle(s string, maxLen int) string {
 		return s[:maxLen] + "..."
 	}
 	return s
+}
+
+type SelectedFormatInfo struct {
+	FormatID      string
+	Resolution    string
+	FileSizeMB    float64
+	IsProgressive bool
+	NeedsMerge    bool
+}
+
+func selectFormat(formats []downloader.ProbeFormat, quality media.Quality, defaultFormat string) SelectedFormatInfo {
+	if len(formats) == 0 {
+		return SelectedFormatInfo{
+			FormatID:      defaultFormat,
+			Resolution:    "unknown",
+			FileSizeMB:    0,
+			IsProgressive: false,
+			NeedsMerge:    true,
+		}
+	}
+
+	findBestAudio := func() *downloader.ProbeFormat {
+		var bestAudio *downloader.ProbeFormat
+		// First pass: look for audio-only streams (no video)
+		for i := range formats {
+			f := &formats[i]
+			if f.Acodec != "" && f.Acodec != "none" && (f.Vcodec == "" || f.Vcodec == "none") {
+				if bestAudio == nil || f.Filesize > bestAudio.Filesize {
+					bestAudio = f
+				}
+			}
+		}
+		// Second pass fallback: any stream with audio if no audio-only exists
+		if bestAudio == nil {
+			for i := range formats {
+				f := &formats[i]
+				if f.Acodec != "" && f.Acodec != "none" {
+					if bestAudio == nil || f.Filesize > bestAudio.Filesize {
+						bestAudio = f
+					}
+				}
+			}
+		}
+		return bestAudio
+	}
+
+	// 1. AUTO: progressive MP4 priority, else DASH bestvideo+bestaudio
+	if quality == media.QualityAuto {
+		var bestProg *downloader.ProbeFormat
+		for i := range formats {
+			f := &formats[i]
+			if f.Vcodec != "" && f.Vcodec != "none" &&
+				f.Acodec != "" && f.Acodec != "none" &&
+				f.Ext == "mp4" {
+				if bestProg == nil || f.Height > bestProg.Height || (f.Height == bestProg.Height && f.Filesize > bestProg.Filesize) {
+					bestProg = f
+				}
+			}
+		}
+		if bestProg != nil {
+			return SelectedFormatInfo{
+				FormatID:      bestProg.FormatID,
+				Resolution:    fmt.Sprintf("%dx%d", bestProg.Width, bestProg.Height),
+				FileSizeMB:    float64(bestProg.Filesize) / (1024 * 1024),
+				IsProgressive: true,
+				NeedsMerge:    false,
+			}
+		}
+
+		var bestVideo *downloader.ProbeFormat
+		for i := range formats {
+			f := &formats[i]
+			if f.Vcodec != "" && f.Vcodec != "none" {
+				if bestVideo == nil || f.Height > bestVideo.Height || (f.Height == bestVideo.Height && f.Filesize > bestVideo.Filesize) {
+					bestVideo = f
+				}
+			}
+		}
+		bestAudio := findBestAudio()
+		if bestVideo != nil && bestAudio != nil {
+			formatID := bestVideo.FormatID + "+" + bestAudio.FormatID
+			needsMerge := true
+			isProgressive := false
+			if bestVideo.Acodec != "" && bestVideo.Acodec != "none" {
+				formatID = bestVideo.FormatID
+				needsMerge = false
+				isProgressive = true
+			}
+			totalSize := bestVideo.Filesize
+			if needsMerge {
+				totalSize += bestAudio.Filesize
+			}
+			return SelectedFormatInfo{
+				FormatID:      formatID,
+				Resolution:    fmt.Sprintf("%dx%d", bestVideo.Width, bestVideo.Height),
+				FileSizeMB:    float64(totalSize) / (1024 * 1024),
+				IsProgressive: isProgressive,
+				NeedsMerge:    needsMerge,
+			}
+		}
+	}
+
+	// 2. ORIGINAL: highest possible format
+	if quality == media.QualityOriginal {
+		var bestVideo *downloader.ProbeFormat
+		for i := range formats {
+			f := &formats[i]
+			if f.Vcodec != "" && f.Vcodec != "none" {
+				if bestVideo == nil || f.Height > bestVideo.Height || (f.Height == bestVideo.Height && f.Filesize > bestVideo.Filesize) {
+					bestVideo = f
+				}
+			}
+		}
+		bestAudio := findBestAudio()
+		if bestVideo != nil && bestAudio != nil {
+			formatID := bestVideo.FormatID + "+" + bestAudio.FormatID
+			needsMerge := true
+			isProgressive := false
+			if bestVideo.Acodec != "" && bestVideo.Acodec != "none" {
+				formatID = bestVideo.FormatID
+				needsMerge = false
+				isProgressive = true
+			}
+			totalSize := bestVideo.Filesize
+			if needsMerge {
+				totalSize += bestAudio.Filesize
+			}
+			return SelectedFormatInfo{
+				FormatID:      formatID,
+				Resolution:    fmt.Sprintf("%dx%d", bestVideo.Width, bestVideo.Height),
+				FileSizeMB:    float64(totalSize) / (1024 * 1024),
+				IsProgressive: isProgressive,
+				NeedsMerge:    needsMerge,
+			}
+		}
+	}
+
+	// 3. Specific resolution capped (1080p, 720p, 480p)
+	var targetHeight int
+	switch quality {
+	case media.QualityP1080:
+		targetHeight = 1080
+	case media.QualityP720:
+		targetHeight = 720
+	case media.QualityP480:
+		targetHeight = 480
+	}
+	if targetHeight > 0 {
+		var bestVideo *downloader.ProbeFormat
+		for i := range formats {
+			f := &formats[i]
+			if f.Vcodec != "" && f.Vcodec != "none" && f.Height <= targetHeight {
+				if bestVideo == nil || f.Height > bestVideo.Height || (f.Height == bestVideo.Height && f.Filesize > bestVideo.Filesize) {
+					bestVideo = f
+				}
+			}
+		}
+		bestAudio := findBestAudio()
+		if bestVideo != nil && bestAudio != nil {
+			formatID := bestVideo.FormatID + "+" + bestAudio.FormatID
+			needsMerge := true
+			isProgressive := false
+			if bestVideo.Acodec != "" && bestVideo.Acodec != "none" {
+				formatID = bestVideo.FormatID
+				needsMerge = false
+				isProgressive = true
+			}
+			totalSize := bestVideo.Filesize
+			if needsMerge {
+				totalSize += bestAudio.Filesize
+			}
+			return SelectedFormatInfo{
+				FormatID:      formatID,
+				Resolution:    fmt.Sprintf("%dx%d", bestVideo.Width, bestVideo.Height),
+				FileSizeMB:    float64(totalSize) / (1024 * 1024),
+				IsProgressive: isProgressive,
+				NeedsMerge:    needsMerge,
+			}
+		}
+	}
+
+	return SelectedFormatInfo{
+		FormatID:      defaultFormat,
+		Resolution:    "unknown",
+		FileSizeMB:    0,
+		IsProgressive: false,
+		NeedsMerge:    true,
+	}
 }

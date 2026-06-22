@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type YTDLP struct {
-	Bin string
+	Bin                 string
+	ConcurrentFragments int
+	Retries             int
+	FragmentRetries     int
 }
 
 // ProbeInfo — basic info from yt-dlp --dump-json (fast, single-stream)
@@ -100,15 +104,27 @@ func IsVideoFormatNotFoundError(err error) bool {
 		strings.Contains(msg, "no matching formats found")
 }
 
-func mandatoryFlags() []string {
+func (y YTDLP) mandatoryFlags() []string {
+	concurrent := y.ConcurrentFragments
+	if concurrent <= 0 {
+		concurrent = 16
+	}
+	retries := y.Retries
+	if retries <= 0 {
+		retries = 3
+	}
+	fragRetries := y.FragmentRetries
+	if fragRetries <= 0 {
+		fragRetries = 3
+	}
 	return []string{
 		"-4",
 		"--no-playlist",
 		"--no-check-certificates",
 		"--socket-timeout", "15",
-		"--retries", "2",
-		"--fragment-retries", "2",
-		"--concurrent-fragments", "4",
+		"--retries", strconv.Itoa(retries),
+		"--fragment-retries", strconv.Itoa(fragRetries),
+		"--concurrent-fragments", strconv.Itoa(concurrent),
 		"--no-write-info-json",
 		"--no-write-thumbnail",
 		"--no-write-comments",
@@ -120,7 +136,7 @@ func mandatoryFlags() []string {
 func (y YTDLP) Probe(ctx context.Context, rawURL, format string, cookiesArgs []string) (ProbeInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // Probe: 10s max
 	defer cancel()
-	args := mandatoryFlags()
+	args := y.mandatoryFlags()
 	args = append(args,
 		"--format", format,
 		"--no-warnings",
@@ -144,7 +160,7 @@ func (y YTDLP) Probe(ctx context.Context, rawURL, format string, cookiesArgs []s
 func (y YTDLP) ProbeRich(ctx context.Context, rawURL string, cookiesArgs []string) (RichProbeInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // Probe: 10s max
 	defer cancel()
-	args := mandatoryFlags()
+	args := y.mandatoryFlags()
 	args = append(args,
 		"--no-warnings",
 		"--dump-json",
@@ -173,7 +189,7 @@ func (y YTDLP) Download(ctx context.Context, rawURL, format, outputDir, baseName
 	}
 
 	template := filepath.Join(outputDir, baseName+".%(ext)s")
-	args := mandatoryFlags()
+	args := y.mandatoryFlags()
 	args = append(args,
 		"--format", format,
 		"--merge-output-format", "mp4",
@@ -200,7 +216,7 @@ func (y YTDLP) Download(ctx context.Context, rawURL, format, outputDir, baseName
 func (y YTDLP) DownloadThumbnail(ctx context.Context, rawURL, outputDir, baseName string, cookiesArgs []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // yt-dlp: 30s context timeout
 	defer cancel()
-	args := mandatoryFlags()
+	args := y.mandatoryFlags()
 	args = append(args,
 		"--write-thumbnail",
 		"--convert-thumbnails", "jpg",
@@ -234,7 +250,7 @@ func (y YTDLP) DownloadThumbnail(ctx context.Context, rawURL, outputDir, baseNam
 func (y YTDLP) DownloadAudio(ctx context.Context, rawURL, outputDir, baseName string, cookiesArgs []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // yt-dlp: 30s context timeout
 	defer cancel()
-	args := mandatoryFlags()
+	args := y.mandatoryFlags()
 	args = append(args,
 		"-x",
 		"--audio-format", "mp3",

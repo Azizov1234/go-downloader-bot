@@ -124,6 +124,11 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		if sendErr == nil {
 			r.media.MarkDaily(ctx, variantType, true, "SUCCESS", false)
 			_ = r.users.IncrementDownloads(ctx, user.ID)
+			r.logger.Info("cache hit log",
+				"cache_hit", true,
+				"send_by", "file_id",
+				"total_ms", time.Since(requestStarted).Milliseconds(),
+			)
 			return
 		}
 		_ = r.media.ClearFileID(ctx, cacheResult.Variant.ID)
@@ -161,6 +166,7 @@ func (r *Router) handleInstagramLink(ctx context.Context, msg *tgbotapi.Message,
 		VariantType:        variantType,
 		Quality:            quality,
 		QueuedAt:           time.Now(),
+		CacheCheckMs:       cacheResult.Took.Milliseconds(),
 	}
 	if err := r.queue.EnqueueDownload(ctx, task); err != nil {
 		r.logs.Write(ctx, &user.ID, "instagram", "enqueue", "queuega qo'shib bo'lmadi", err)

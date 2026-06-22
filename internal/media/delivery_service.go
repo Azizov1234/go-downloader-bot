@@ -372,7 +372,13 @@ func (s *DeliveryService) sendMultipartLocalAPI(ctx context.Context, chatID int6
 	}
 
 	endpoint := apiMethodURL(s.cfg.TelegramLocalAPIURL, s.cfg.BotToken, method)
-	return s.requestMultipart(ctx, endpoint, method, absPath, pr, realWriter.FormDataContentType(), fileSize, contentLength)
+	uploadStart := time.Now()
+	msg, err := s.requestMultipart(ctx, endpoint, method, absPath, pr, realWriter.FormDataContentType(), fileSize, contentLength)
+	sendMs := time.Since(uploadStart).Milliseconds()
+	sizeMB := bytesToMegabytes(fileSize)
+	log.Printf("sendMultipartLocalAPI log: method=sendMultipartLocalAPI file_path=%s exists=true file_size_mb=%d send_ms=%d",
+		absPath, sizeMB, sendMs)
+	return msg, err
 }
 
 func (s *DeliveryService) requestMultipart(ctx context.Context, endpoint, method, absPath string, body io.Reader, contentType string, fileSize int64, contentLength int64) (tgbotapi.Message, error) {

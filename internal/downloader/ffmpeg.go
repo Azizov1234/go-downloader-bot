@@ -88,6 +88,7 @@ func (f FFMpeg) ImageToVideo(ctx context.Context, imagePath, audioPath, outputPa
 		"-i", audioPath,
 		"-shortest",
 		"-c:v", "libx264",
+		"-preset", "ultrafast",
 		"-pix_fmt", "yuv420p",
 		"-c:a", "aac",
 		"-b:a", "192k",

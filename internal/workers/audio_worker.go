@@ -74,11 +74,17 @@ func (w *AudioWorker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	}
 	md := media.Metadata{FileSize: size}
 	return w.queue.EnqueueSend(ctx, queue.SendTask{
-		DownloadTask: payload.DownloadTask,
-		LocalPath:    payload.OutputPath,
-		Metadata:     md,
-		ProbeMs:      payload.ProbeMs,
-		DownloadMs:   payload.DownloadMs,
-		ConvertMs:    time.Since(start).Milliseconds(),
+		DownloadTask:   payload.DownloadTask,
+		LocalPath:      payload.OutputPath,
+		Metadata:       md,
+		ProbeMs:        payload.ProbeMs,
+		DownloadMs:     payload.DownloadMs,
+		ConvertMs:      time.Since(start).Milliseconds(),
+		MergeMs:        0,
+		SelectedFormat: "audio",
+		IsProgressive:  true,
+		UsedFFmpeg:     true,
+		CacheHit:       false,
+		Method:         "sendMultipartLocalAPI",
 	})
 }
