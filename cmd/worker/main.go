@@ -117,6 +117,7 @@ func main() {
 		Cookies:    instagram.Cookies{Use: cfg.InstagramUseCookies, File: cfg.InstagramCookiesFile},
 		Storage:    storageService, Media: mediaService, Settings: settingsService,
 		Users:      userService, Logs: errorLogs, Queue: queueClient, Locks: locks,
+		Delivery:   delivery,
 		AllowOversized: cfg.AllowOversizedDownloads,
 	})
 	audioWorker := workers.NewAudioWorker(bot.API, downloader.FFMpeg{Bin: cfg.FFmpegBin}, storageService, settingsService, mediaService, queueClient, locks, cfg.AllowOversizedDownloads)

@@ -29,6 +29,7 @@ type ProbeInfo struct {
 	Thumbnail      string  `json:"thumbnail"`
 	// _type is "video", "playlist", etc.
 	Type string `json:"_type"`
+	URL  string `json:"url"`
 }
 
 // RichProbeInfo — detailed info including formats list and carousel entries
@@ -47,6 +48,7 @@ type ProbeFormat struct {
 	Height   int    `json:"height"`
 	Width    int    `json:"width"`
 	Filesize int64  `json:"filesize"`
+	URL      string `json:"url"`
 }
 
 type ProbeEntry struct {

@@ -39,6 +39,7 @@ type DownloadWorker struct {
 	logs           *logs.ErrorLogService
 	queue          *queue.Client
 	locks          *queue.Locks
+	delivery       *media.DeliveryService
 	allowOversized bool
 }
 
@@ -58,6 +59,7 @@ type DownloadWorkerDeps struct {
 	Logs           *logs.ErrorLogService
 	Queue          *queue.Client
 	Locks          *queue.Locks
+	Delivery       *media.DeliveryService
 	AllowOversized bool
 }
 
@@ -68,7 +70,7 @@ func NewDownloadWorker(dep DownloadWorkerDeps) *DownloadWorker {
 		formats: dep.Formats, cookies: dep.Cookies, storage: dep.Storage,
 		media: dep.Media, settings: dep.Settings, users: dep.Users,
 		logs: dep.Logs, queue: dep.Queue, locks: dep.Locks,
-		allowOversized: dep.AllowOversized,
+		delivery: dep.Delivery, allowOversized: dep.AllowOversized,
 	}
 }
 
@@ -172,6 +174,121 @@ func (w *DownloadWorker) ProcessTask(ctx context.Context, task *asynq.Task) erro
 			w.media.MarkDaily(ctx, payload.VariantType, false, "FAILED", true)
 			w.locks.Release(ctx, lockKey)
 			return nil
+		}
+	}
+
+	// Direct URL sending flow
+	var directURL string
+	if !useGalleryDL && payload.VariantType == media.VariantVideo && !optFormat.NeedsMerge {
+		for _, f := range richInfo.Formats {
+			if f.FormatID == optFormat.FormatID {
+				directURL = f.URL
+				break
+			}
+		}
+	}
+
+	if directURL != "" {
+		w.logger.Info("attempting direct url send",
+			"url", payload.OriginalURL,
+			"direct_url", directURL,
+			"direct_url_found", true,
+			"direct_send_attempt", true,
+		)
+
+		mediaFile, getErr := w.media.GetOrCreateMediaFile(ctx, payload.OriginalURL, payload.NormalizedURL, payload.InstagramShortcode)
+		if getErr == nil {
+			var width, height *int
+			var duration *int
+			for _, f := range richInfo.Formats {
+				if f.FormatID == optFormat.FormatID {
+					if f.Width > 0 {
+						wVal := f.Width
+						width = &wVal
+					}
+					if f.Height > 0 {
+						hVal := f.Height
+						height = &hVal
+					}
+					break
+				}
+			}
+			if richInfo.ProbeInfo.Duration > 0 {
+				durSec := int(richInfo.ProbeInfo.Duration)
+				duration = &durSec
+			}
+
+			dummyMeta := media.Metadata{
+				Width:    width,
+				Height:   height,
+				Duration: duration,
+				FileSize: int64(optFormat.FileSizeMB * 1024 * 1024),
+			}
+
+			variant, upsertErr := w.media.UpsertVariant(ctx, mediaFile, payload.VariantType, payload.Quality, "", "", dummyMeta, "PENDING")
+			if upsertErr == nil {
+				directSendStart := time.Now()
+				sent, sendErr := w.delivery.SendByDirectURLTimed(ctx, payload.Recipient.ChatID, directURL, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt), payload.CustomTitle)
+				if sendErr == nil {
+					w.logger.Info("direct url send success", "url", payload.OriginalURL, "direct_send_success", true)
+
+					// Update DB cache with returned telegram file IDs and actual metadata
+					variant, upsertErr = w.media.UpsertVariant(ctx, mediaFile, payload.VariantType, payload.Quality, sent.FileID, sent.FileUniqueID, sent.Metadata, "READY")
+					if upsertErr != nil {
+						w.logger.Error("failed to upsert ready variant for direct send success", "error", upsertErr)
+					}
+
+					// Success metrics & increment downloads
+					w.markSuccess(ctx, payload.Recipient, variant.ID, payload, sent.SendDuration)
+
+					// Delivery timing summary log
+					w.logger.Info("delivery timing summary (direct_url)",
+						"cache_hit", false,
+						"direct_url_found", true,
+						"direct_send_attempt", true,
+						"direct_send_success", true,
+						"send_by", "direct_url",
+						"selected_format_id", optFormat.FormatID,
+						"selected_resolution", optFormat.Resolution,
+						"selected_filesize_mb", optFormat.FileSizeMB,
+						"is_progressive", optFormat.IsProgressive,
+						"needs_merge", optFormat.NeedsMerge,
+						"used_ffmpeg", false,
+						"probe_ms", probeMs,
+						"download_ms", int64(0),
+						"merge_ms", int64(0),
+						"send_ms", sent.SendDuration.Milliseconds(),
+						"total_ms", time.Since(payload.QueuedAt).Milliseconds(),
+						"method", "sendVideoDirectURL",
+					)
+
+					// Send by file_id to other waiters
+					waiters, _ := w.locks.PopWaiters(ctx, queue.WaitersKey(payload.NormalizedURL, payload.VariantType, payload.Quality))
+					if len(waiters) == 0 {
+						waiters = []queue.Recipient{payload.Recipient}
+					}
+					for _, r := range waiters[1:] {
+						_, err := w.delivery.SendByFileIDTimed(ctx, r.ChatID, variant, telegram.MediaActionsKeyboard(variant.ID), time.Since(payload.QueuedAt), payload.CustomTitle)
+						if err == nil {
+							w.markSuccess(ctx, r, variant.ID, payload, time.Since(directSendStart))
+						}
+						time.Sleep(80 * time.Millisecond)
+					}
+
+					w.locks.Release(ctx, lockKey)
+					return nil
+				} else {
+					w.logger.Warn("direct url send failed, falling back to download",
+						"url", payload.OriginalURL,
+						"error", sendErr,
+						"fallback_to_download", true,
+					)
+				}
+			} else {
+				w.logger.Error("failed to upsert pending variant for direct send", "error", upsertErr)
+			}
+		} else {
+			w.logger.Error("failed to get or create media file for direct send", "error", getErr)
 		}
 	}
 
@@ -399,6 +516,14 @@ func (w *DownloadWorker) failWaiters(ctx context.Context, payload queue.Download
 	if technical != nil {
 		_ = w.queue.EnqueueNotification(ctx, queue.NotificationTask{Text: "Instagram download xatosi: " + technical.Error()})
 	}
+}
+
+func (w *DownloadWorker) markSuccess(ctx context.Context, r queue.Recipient, variantID int64, payload queue.DownloadTask, sendDuration time.Duration) {
+	if r.DownloadID > 0 {
+		_ = w.media.UpdateDownloadMetrics(ctx, r.DownloadID, &variantID, "SUCCESS", time.Since(payload.QueuedAt), 0, 0, sendDuration, time.Since(payload.QueuedAt), "")
+	}
+	w.media.MarkDaily(ctx, payload.VariantType, false, "SUCCESS", false)
+	_ = w.users.IncrementDownloads(ctx, r.UserID)
 }
 
 func knownSize(info downloader.ProbeInfo) int64 {

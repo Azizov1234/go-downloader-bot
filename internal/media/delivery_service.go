@@ -79,6 +79,7 @@ type SentFile struct {
 	FileUniqueID string
 	MessageID    int
 	SendDuration time.Duration
+	Metadata     Metadata
 }
 
 func NewDeliveryService(bot *tgbotapi.BotAPI, cfg config.Config, settingsService *settings.Service) *DeliveryService {
@@ -98,6 +99,23 @@ func (s *DeliveryService) SendByFileIDTimed(ctx context.Context, chatID int64, v
 	start := time.Now()
 	caption := CaptionWithElapsed(variant, elapsed, customTitle)
 	msg, err := s.sendFileIDViaCloud(ctx, chatID, variant, caption, replyMarkup, customTitle)
+	if err != nil {
+		return SentFile{}, err
+	}
+	return sentFromMessage(msg, variant.VariantType, time.Since(start))
+}
+
+func (s *DeliveryService) SendByDirectURLTimed(ctx context.Context, chatID int64, directURL string, variant MediaVariant, replyMarkup any, elapsed time.Duration, customTitle string) (SentFile, error) {
+	start := time.Now()
+	caption := CaptionWithElapsed(variant, elapsed, customTitle)
+	cfg := tgbotapi.NewVideo(chatID, tgbotapi.FileURL(directURL))
+	cfg.Caption = caption
+	cfg.SupportsStreaming = true
+	cfg.ReplyMarkup = replyMarkup
+	if variant.Duration != nil {
+		cfg.Duration = *variant.Duration
+	}
+	msg, err := s.bot.Send(cfg)
 	if err != nil {
 		return SentFile{}, err
 	}
@@ -503,16 +521,24 @@ func sentFromMessage(msg tgbotapi.Message, variantType VariantType, took time.Du
 		}
 		out.FileID = msg.Audio.FileID
 		out.FileUniqueID = msg.Audio.FileUniqueID
+		out.Metadata = Metadata{
+			FileSize: int64(msg.Audio.FileSize),
+			Duration: &msg.Audio.Duration,
+		}
 		return out, nil
 	}
 	if variantType == VariantImage {
 		if len(msg.Photo) == 0 {
 			return out, fmt.Errorf("telegram photo response has no file")
 		}
-		// Telegram returns multiple resolutions; last is highest quality
 		best := msg.Photo[len(msg.Photo)-1]
 		out.FileID = best.FileID
 		out.FileUniqueID = best.FileUniqueID
+		out.Metadata = Metadata{
+			FileSize: int64(best.FileSize),
+			Width:    &best.Width,
+			Height:   &best.Height,
+		}
 		return out, nil
 	}
 	if msg.Video == nil {
@@ -520,6 +546,12 @@ func sentFromMessage(msg tgbotapi.Message, variantType VariantType, took time.Du
 	}
 	out.FileID = msg.Video.FileID
 	out.FileUniqueID = msg.Video.FileUniqueID
+	out.Metadata = Metadata{
+		FileSize: int64(msg.Video.FileSize),
+		Width:    &msg.Video.Width,
+		Height:   &msg.Video.Height,
+		Duration: &msg.Video.Duration,
+	}
 	return out, nil
 }
 
